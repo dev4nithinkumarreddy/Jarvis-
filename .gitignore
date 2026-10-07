@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# Pytest
+.pytest_cache/
+
+# Logs
+logs/*.log
+!logs/.gitkeep
+
+# Local persistent memory
+data/*.db

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "A local AI desktop agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic==2.13.5",
+    "PyYAML==6.0.3",
+    "rich==15.0.0",
+    "pytest==9.1.1",
+    "pynput==1.8.2",
+    "anthropic==1.11.0",
+    "psutil==7.2.2",
+    "send2trash==2.1.0",
+    "sounddevice==0.5.6",
+    "pyttsx3==2.99",
+    "faster-whisper==1.2.1",
+    "openwakeword==0.6.0",
+    "piper-tts==1.8.0",
+    "playwright==1.50.0",
+    "mss==10.2.0",
+    "pyautogui==0.9.54",
+    "Pillow==12.3.0",
+    "apscheduler==3.11.3",
+    "fastapi==0.142.2",
+    "uvicorn==0.54.0",
+    "groq==1.7.0",
+    "pywebview>=6.2.1",
+    "pystray>=0.19.5",
+]
+
+[project.scripts]
+jarvis = "jarvis.ui.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

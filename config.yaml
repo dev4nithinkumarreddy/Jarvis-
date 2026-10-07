@@ -1,0 +1,131 @@
+# Jarvis configuration
+allowed_roots:
+  - "."
+
+# LLM Brain configuration
+# Supported providers: "anthropic", "groq"
+# For Anthropic: set ANTHROPIC_API_KEY environment variable
+# For Groq: set GROQ_API_KEY environment variable
+brain:
+  provider: "groq"
+  model: "openai/gpt-oss-120b"
+  base_url: "https://api.groq.com"
+  max_tokens: 1024
+  max_context_tokens: 6000
+  max_wait_seconds: 20.0
+  tool_output_truncation_bytes: 4096
+  history_turns: 4
+  compact_tool_descriptions: true
+
+max_tool_calls_per_turn: 8
+audit_log_path: "logs/audit.log"
+confirm_timeout_seconds: 30.0
+
+# Allowed desktop applications mapping name to executable command
+# Example:
+# apps:
+#   notepad: "notepad.exe"
+#   calc: "calc.exe"
+apps: {}
+
+# Allowed shell commands with fixed executable and argument validation rules
+# Example 1: git status check
+# commands:
+#   git_status:
+#     executable: "git"
+#     args_schema: ["^status$"]
+#     timeout_seconds: 20.0
+# Example 2: python version inspection
+#   python_version:
+#     executable: "python"
+#     args_schema: ["^--version$"]
+#     timeout_seconds: 10.0
+commands: {}
+
+# Voice channel configuration
+voice:
+  input_device: null
+  output_device: null
+  sample_rate: 16000
+  stt_model: "base"
+  stt_device: "cpu"
+  language: "en"
+  tts_engine: "pyttsx3"
+  piper_model_path: null
+  piper_config_path: null
+  ptt_key: "space"
+  wake_word: "hey_jarvis_v0.1.onnx"
+  wake_threshold: 0.5
+  silence_timeout_seconds: 1.5
+  dual_confirm_key: "enter"
+
+# Browser automation configuration
+browser:
+  headless: true
+  profile_dir: ".browser_profile"
+  allowed_domains: []
+  denied_domains: []
+  screenshot_dir: "logs/screens"
+  timeout_ms: 30000.0
+
+# GUI desktop automation configuration
+gui:
+  approval_mode: "step"
+  session_max_actions: 20
+  session_timeout_seconds: 300.0
+  max_screen_width: 1280
+  denied_window_titles:
+    - "1password"
+    - "bitwarden"
+    - "keepass"
+    - "lastpass"
+    - "dashlane"
+    - "bank"
+    - "paypal"
+    - "chase"
+    - "wells fargo"
+    - "citibank"
+    - "capital one"
+  thumbnail_dir: "logs/screens"
+ 
+# Local persistent memory configuration
+memory:
+  enabled: true
+  db_path: "data/memory.db"
+  max_context_chars: 2000
+  history_turns: 10
+
+# Scheduled routines configuration
+routines:
+  enabled: false
+  briefing_time: "09:00"
+  max_files_scanned: 500
+  scan_timeout_seconds: 5.0
+
+# Local Web HUD configuration
+hud:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8000
+  confirm_timeout_seconds: 30.0
+
+# Safety configuration
+safety:
+  protected_paths:
+    - "config.yaml"
+    - "AGENT_RULES.md"
+    - "SECURITY.md"
+    - "src"
+    - "logs"
+    - "data"
+    - ".browser_profile"
+    - ".env"
+  read_safe_files:
+    - "README.md"
+
+# Iron Man Persona Configuration
+persona:
+  user_title: "Sir"
+  name: "J.A.R.V.I.S."
+
+
