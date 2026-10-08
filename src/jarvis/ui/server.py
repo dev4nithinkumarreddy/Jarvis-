@@ -14,7 +14,7 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import psutil
 import uvicorn
@@ -45,7 +45,13 @@ def is_allowed_origin(origin: str | None, host: str, port: int) -> bool:
         f"https://localhost:{port}",
         f"https://127.0.0.1:{port}",
     }
-    return origin.rstrip("/") in allowed
+    origin_clean = origin.rstrip("/")
+    if origin_clean in allowed:
+        return True
+    # Allow GitHub Pages origins to connect to local bridge
+    if origin_clean.endswith(".github.io") or origin_clean == "null":
+        return True
+    return False
 
 
 def is_allowed_host(host_header: str | None, port: int, allow_testserver: bool = False) -> bool:
@@ -272,7 +278,7 @@ class HudServer:
                 "default-src 'self'; "
                 "script-src 'self'; "
                 "style-src 'self'; "
-                "connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; "
+                "connect-src 'self' https://api.groq.com ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; "
                 "img-src 'self' data:; "
                 "object-src 'none'; "
                 "frame-ancestors 'none'; "
@@ -284,13 +290,21 @@ class HudServer:
         if STATIC_DIR.exists():
             app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-        # 3. Root HUD page
+        # 3. Root HUD page & Root static assets
         @app.get("/", response_class=HTMLResponse)
         async def get_index(request: Request) -> Response:
             index_file = STATIC_DIR / "index.html"
             if index_file.exists():
                 return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
             return HTMLResponse(content="<h1>Jarvis HUD (Static files not found)</h1>")
+
+        @app.get("/style.css")
+        async def get_root_style() -> Response:
+            return FileResponse(STATIC_DIR / "style.css", media_type="text/css")
+
+        @app.get("/app.js")
+        async def get_root_app_js() -> Response:
+            return FileResponse(STATIC_DIR / "app.js", media_type="application/javascript")
 
         # 4. WebSocket endpoint
         @app.websocket("/ws")
@@ -358,6 +372,10 @@ class HudServer:
                             self.kill_switch.trigger()
                             self.broadcast_state("halted")
                             self.broadcast({"type": "kill_state", "active": True})
+                        elif msg_type == "resume":
+                            self.kill_switch.reset()
+                            self.broadcast_state("idle")
+                            self.broadcast({"type": "kill_state", "active": False})
                     except Exception as err:
                         logger.debug("Error processing HUD message: %s", err)
             except (WebSocketDisconnect, Exception):
@@ -455,6 +473,7 @@ class HudServer:
             port=self.port,
             log_level="warning",
             access_log=False,
+            log_config=None,
         )
         self._uvicorn_server = uvicorn.Server(config)
 

@@ -27,12 +27,14 @@ class JarvisTrayApp:
     def __init__(
         self,
         hud_url: str | None = None,
+        on_open_app: Callable[[], None] | None = None,
         on_screen_analyze: Callable[[], None] | None = None,
         on_kill_switch: Callable[[], None] | None = None,
         on_shutdown: Callable[[], None] | None = None,
         icon_path: Path | str = "data/icons/jarvis.ico",
     ) -> None:
         self.hud_url = hud_url
+        self.on_open_app = on_open_app
         self.on_screen_analyze = on_screen_analyze
         self.on_kill_switch = on_kill_switch
         self.on_shutdown = on_shutdown
@@ -43,9 +45,33 @@ class JarvisTrayApp:
 
         self._icon: pystray.Icon | None = None
         self._thread: threading.Thread | None = None
+        self._hotkey_listener = None
+
+    def _open_app(self, icon: Any = None, item: Any = None) -> None:
+        if self.on_open_app:
+            self.on_open_app()
+        elif self.hud_url:
+            self._open_dock(icon, item)
 
     def _open_hud(self, icon: Any = None, item: Any = None) -> None:
         if self.hud_url:
+            webbrowser.open(self.hud_url)
+
+    def _open_dock(self, icon: Any = None, item: Any = None) -> None:
+        if not self.hud_url:
+            return
+        # Immediate audible Stark confirmation chime so user knows shortcut fired
+        try:
+            import winsound
+            winsound.Beep(980, 150)
+        except Exception:
+            pass
+
+        try:
+            from jarvis.ui.widget import launch_widget
+            launch_widget(self.hud_url)
+        except Exception as e:
+            logger.warning("Could not launch widget, opening browser directly: %s", e)
             webbrowser.open(self.hud_url)
 
     def _trigger_screen(self, icon: Any = None, item: Any = None) -> None:
@@ -63,6 +89,11 @@ class JarvisTrayApp:
             enable_autostart()
 
     def _exit_app(self, icon: Any = None, item: Any = None) -> None:
+        if self._hotkey_listener:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
         if self._icon:
             self._icon.stop()
         if self.on_shutdown:
@@ -72,7 +103,7 @@ class JarvisTrayApp:
         return pystray.Menu(
             pystray.MenuItem("J.A.R.V.I.S. Mark VII", None, enabled=False),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("⚡ Open Holographic HUD", self._open_hud, default=True),
+            pystray.MenuItem("⚡ Open J.A.R.V.I.S. (Ctrl+Alt+J)", self._open_app, default=True),
             pystray.MenuItem("👁️ Analyze Screen", self._trigger_screen),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
@@ -86,7 +117,7 @@ class JarvisTrayApp:
         )
 
     def start(self, blocking: bool = False) -> None:
-        """Start the system tray icon."""
+        """Start the system tray icon and global summon hotkey listener."""
         try:
             image = Image.open(str(self.icon_path))
         except Exception:
@@ -101,6 +132,23 @@ class JarvisTrayApp:
             menu=self._build_menu(),
         )
 
+        # Register robust global summon hotkey (Ctrl+Alt+J)
+        try:
+            from jarvis.ui.hotkey import UniversalGlobalHotkey
+
+            def on_summon():
+                logger.info("Global summon shortcut triggered! Opening J.A.R.V.I.S....")
+                self._open_app()
+
+            self._hotkey_listener = UniversalGlobalHotkey(
+                callback=on_summon,
+                chord="ctrl+alt+j",
+            )
+            self._hotkey_listener.start()
+            logger.info("Global summon hotkey (Ctrl+Alt+J) active.")
+        except Exception as exc:
+            logger.debug("Summon hotkey registration skipped: %s", exc)
+
         if blocking:
             self._icon.run()
         else:
@@ -108,7 +156,13 @@ class JarvisTrayApp:
             self._thread.start()
 
     def stop(self) -> None:
-        """Stop and remove system tray icon."""
+        """Stop and remove system tray icon and unhook hotkey."""
+        if self._hotkey_listener:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
+            self._hotkey_listener = None
         if self._icon:
             self._icon.stop()
             self._icon = None

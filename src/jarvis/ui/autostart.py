@@ -85,11 +85,23 @@ def get_windows_startup_dir() -> Path:
 
 
 def get_windows_desktop_dir() -> Path:
-    """Return path to user's Windows Desktop directory."""
+    """Return path to user's active Windows Desktop directory, resolving OneDrive redirection if present."""
+    # 1. Check OneDrive environment variable
+    onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer") or os.environ.get("OneDriveCommercial")
+    if onedrive:
+        od_desktop = Path(onedrive) / "Desktop"
+        if od_desktop.exists():
+            return od_desktop
+
+    # 2. Check USERPROFILE / OneDrive / Desktop
     userprofile = os.environ.get("USERPROFILE")
-    if not userprofile:
-        return Path.home() / "Desktop"
-    return Path(userprofile) / "Desktop"
+    if userprofile:
+        up_od_desktop = Path(userprofile) / "OneDrive" / "Desktop"
+        if up_od_desktop.exists():
+            return up_od_desktop
+        return Path(userprofile) / "Desktop"
+
+    return Path.home() / "Desktop"
 
 
 def create_windows_shortcut(
@@ -158,10 +170,7 @@ def create_desktop_shortcut(
         py_exe = Path(sys.executable)
 
     launcher_script = root / "jarvisw.pyw"
-    if launcher_script.exists():
-        args = f'"{launcher_script}"'
-    else:
-        args = '-m jarvis.ui.cli run'
+    args = f'"{launcher_script}"' if launcher_script.exists() else '-m jarvis.ui.cli app'
 
     success = create_windows_shortcut(
         shortcut_path=shortcut_path,

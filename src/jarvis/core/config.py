@@ -371,6 +371,35 @@ class JarvisConfig(BaseModel):
 Config = JarvisConfig
 
 
+def load_dotenv_if_present(env_path: Path | str | None = None) -> None:
+    """Load key-value pairs from a .env file into os.environ if not already set."""
+    import os
+
+    candidates: list[Path] = []
+    if env_path is not None:
+        candidates.append(Path(env_path))
+    else:
+        candidates.append(Path(".env"))
+        candidates.append(Path(__file__).resolve().parent.parent.parent.parent / ".env")
+
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                with open(cand, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+                break
+            except Exception:
+                pass
+
+
 def load_config(config_path: Path | str = "config.yaml") -> JarvisConfig:
     """Load and validate the Jarvis configuration from a YAML file.
 

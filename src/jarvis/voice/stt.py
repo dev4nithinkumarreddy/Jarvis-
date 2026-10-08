@@ -57,6 +57,16 @@ class FasterWhisperSTT(STTEngine):
             )
         return self._model
 
+    def warmup(self, async_mode: bool = True) -> None:
+        """Pre-load faster-whisper model into memory so first query is instantaneous."""
+        if self._model is not None:
+            return
+        if async_mode:
+            import threading
+            threading.Thread(target=self._ensure_model, daemon=True).start()
+        else:
+            self._ensure_model()
+
     def transcribe(self, audio_data: np.ndarray | str | Path) -> str:
         """Transcribe audio into text using faster-whisper."""
         if isinstance(audio_data, np.ndarray) and len(audio_data) == 0:

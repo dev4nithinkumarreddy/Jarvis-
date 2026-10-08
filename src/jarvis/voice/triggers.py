@@ -72,6 +72,23 @@ class VoiceTrigger(ABC):
         pass
 
 
+def play_ptt_tone(tone_type: str = "start") -> None:
+    """Play a short, non-blocking procedural chime for voice interaction feedback."""
+    def _beep() -> None:
+        try:
+            import platform
+            if platform.system() == "Windows":
+                import winsound
+                if tone_type == "start":
+                    winsound.Beep(1200, 60)
+                else:
+                    winsound.Beep(800, 50)
+        except Exception:
+            pass
+
+    threading.Thread(target=_beep, daemon=True).start()
+
+
 class PushToTalkTrigger(VoiceTrigger):
     """Hold a configurable physical key to record audio; release to finish."""
 
@@ -79,9 +96,11 @@ class PushToTalkTrigger(VoiceTrigger):
         self,
         capture: AudioCapture,
         key_name: str = "space",
+        enable_chimes: bool = True,
     ) -> None:
         self.capture = capture
         self.key_name = key_name
+        self.enable_chimes = enable_chimes
         self._is_held = False
         self._audio_chunks: list[np.ndarray] = []
         self._lock = threading.Lock()
@@ -104,6 +123,8 @@ class PushToTalkTrigger(VoiceTrigger):
                     if not self._is_held:
                         self._is_held = True
                         pressed_event.set()
+                        if self.enable_chimes:
+                            play_ptt_tone("start")
 
         def on_release(key: Any) -> None:
             if match_key(key, self.key_name):
@@ -111,6 +132,8 @@ class PushToTalkTrigger(VoiceTrigger):
                     if self._is_held:
                         self._is_held = False
                         released_event.set()
+                        if self.enable_chimes:
+                            play_ptt_tone("stop")
                         return False  # Stop pynput listener
 
         listener = keyboard.Listener(on_press=on_press, on_release=on_release)

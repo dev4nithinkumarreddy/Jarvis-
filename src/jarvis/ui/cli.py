@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+import psutil
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -25,7 +26,7 @@ from jarvis.core.channels import (
     InputChannel,
     OutputChannel,
 )
-from jarvis.core.config import load_config
+from jarvis.core.config import load_config, load_dotenv_if_present
 from jarvis.core.orchestrator import Orchestrator
 from jarvis.memory.store import MemoryStore
 from jarvis.routines import RoutinesManager
@@ -218,6 +219,7 @@ def voice_command(args: argparse.Namespace) -> None:
         device=config.voice.stt_device,
         language=getattr(config.voice, "language", "en"),
     )
+    stt.warmup(async_mode=True)
     output_dev = getattr(config.voice, "output_device", None)
     fallback_tts = Pyttsx3TTS(device=output_dev)
     if config.voice.tts_engine.lower() == "piper" and config.voice.piper_model_path:
@@ -450,6 +452,7 @@ def run_command(args: argparse.Namespace) -> None:
                 device=config.voice.stt_device,
                 language=getattr(config.voice, "language", "en"),
             )
+            stt.warmup(async_mode=True)
             trigger = PushToTalkTrigger(
                 capture=audio_capture,
                 key_name=config.voice.ptt_key,
@@ -685,6 +688,52 @@ def widget_command(args: argparse.Namespace) -> None:
         hud_server.stop()
 
 
+def app_command(args: argparse.Namespace) -> None:
+    """Launch J.A.R.V.I.S. as a 100% standalone native desktop application (no browser needed)."""
+    from jarvis.ui.native_app import JarvisNativeApp
+    from jarvis.safety.killswitch import get_kill_switch
+    from jarvis.voice.channel import generate_jarvis_greeting
+
+    config = load_config(getattr(args, "config", "config.yaml"))
+    kill_switch = get_kill_switch()
+    kill_switch.start_hotkey_listener()
+
+    user_title = getattr(config.persona, "user_title", "Sir") if hasattr(config, "persona") else "Sir"
+
+    orchestrator = create_orchestrator(
+        config_path=getattr(args, "config", "config.yaml"),
+        dry_run=getattr(args, "dry_run", False),
+    )
+
+    app = JarvisNativeApp(
+        on_user_submit=lambda text: app.channel.say(orchestrator.run_turn(text)),
+        on_screen_analyze=lambda: app.channel.say(orchestrator.run_turn("Jarvis, please analyze my current desktop screen.")),
+        on_kill_switch=lambda: kill_switch.trigger(),
+        user_title=user_title,
+        model_name=getattr(config.brain, "model", "Groq LLaMA 3.3 70B"),
+    )
+
+    # Register Global Summon Shortcut directly to native window
+    from jarvis.ui.hotkey import UniversalGlobalHotkey
+    hotkey = UniversalGlobalHotkey(callback=app.summon, chord="ctrl+alt+j")
+    hotkey.start()
+
+    # Spoken greeting
+    try:
+        from jarvis.voice.tts import Pyttsx3TTS
+        tts = Pyttsx3TTS()
+        greeting = generate_jarvis_greeting(user_title)
+        threading.Thread(target=tts.speak, args=(greeting,), daemon=True).start()
+    except Exception:
+        pass
+
+    try:
+        app.mainloop()
+    finally:
+        hotkey.stop()
+        kill_switch.stop_hotkey_listener()
+
+
 def autostart_command(args: argparse.Namespace) -> None:
     """Manage Windows startup automation and desktop shortcut."""
     action = args.autostart_action
@@ -707,8 +756,194 @@ def autostart_command(args: argparse.Namespace) -> None:
         console.print("[yellow]Please specify action: enable, disable, status, shortcut[/yellow]")
 
 
+def launch_command(args: argparse.Namespace) -> None:
+    """Launch J.A.R.V.I.S. in silent background mode via pythonw."""
+    import subprocess
+    launcher = Path(__file__).resolve().parent.parent.parent.parent / "jarvisw.pyw"
+    pythonw = Path(sys.executable).parent / "pythonw.exe"
+    if not pythonw.is_file():
+        pythonw = Path(sys.executable)
+    subprocess.Popen([str(pythonw), str(launcher)], cwd=str(launcher.parent))
+    console.print(
+        Panel(
+            "[bold green][*] J.A.R.V.I.S. Mark VII Launched in Background![/bold green]\n\n"
+            "- [bold cyan]Vocal Greeting:[/] J.A.R.V.I.S. speaks aloud through your speakers\n"
+            "- [bold cyan]Web HUD:[/] Live dashboard opening in browser at http://127.0.0.1:8000\n"
+            "- [bold cyan]System Tray:[/] Arc Reactor icon active in taskbar (near Windows clock)\n"
+            "- [bold cyan]Voice Mic:[/] Push-to-talk listener is active in the background\n\n"
+            "[dim]You can safely close this terminal window now.[/dim]",
+            title="J.A.R.V.I.S. Online",
+            border_style="cyan",
+        )
+    )
+
+
+def get_running_jarvis_processes() -> list[psutil.Process]:
+    """Find any running python/pythonw processes executing Jarvis."""
+    procs: list[psutil.Process] = []
+    current_pid = os.getpid()
+    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            if p.pid == current_pid:
+                continue
+            cmd = " ".join(p.info.get("cmdline") or []).lower()
+            if "jarvisw.pyw" in cmd or ("jarvis" in cmd and any(action in cmd for action in ("run", "launch", "voice"))):
+                procs.append(p)
+            else:
+                try:
+                    for conn in p.net_connections(kind="inet"):
+                        if conn.laddr and conn.laddr.port in (8000, 48999):
+                            procs.append(p)
+                            break
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return procs
+
+
+def status_command(args: argparse.Namespace) -> None:
+    """Check whether J.A.R.V.I.S. is currently running."""
+    procs = get_running_jarvis_processes()
+    if not procs:
+        console.print(
+            Panel(
+                "[bold yellow][OFFLINE] J.A.R.V.I.S. is currently OFFLINE[/bold yellow]\n\n"
+                "To launch J.A.R.V.I.S.:\n"
+                "  - [cyan]jarvis launch[/cyan] (Silent background mode)\n"
+                "  - [cyan]jarvis run[/cyan] (Interactive multi-channel session)\n"
+                "  - Double-click the J.A.R.V.I.S. desktop shortcut",
+                title="J.A.R.V.I.S. Status",
+                border_style="yellow",
+            )
+        )
+        return
+
+    table = Table(title="Active J.A.R.V.I.S. Processes", border_style="cyan")
+    table.add_column("PID", style="cyan", justify="right")
+    table.add_column("Process Name", style="green")
+    table.add_column("Memory (MB)", style="magenta", justify="right")
+    table.add_column("Status", style="bold green")
+
+    for p in procs:
+        try:
+            mem = f"{p.memory_info().rss / (1024 * 1024):.1f}"
+            status = p.status()
+            table.add_row(str(p.pid), p.name(), mem, status)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    console.print(table)
+    console.print(
+        Panel(
+            "[bold green][ACTIVE] J.A.R.V.I.S. Mark VII is ACTIVE[/bold green]\n\n"
+            "- Web HUD: [cyan]http://127.0.0.1:8000[/cyan]\n"
+            "- Voice Engine: Speech listening & synthesis active\n"
+            "- System Tray: Icon active in Windows taskbar\n\n"
+            "[dim]To stop J.A.R.V.I.S., run 'jarvis stop' | To restart, run 'jarvis restart'[/dim]",
+            title="Systems Online",
+            border_style="green",
+        )
+    )
+
+
+def stop_command(args: argparse.Namespace) -> None:
+    """Stop all background J.A.R.V.I.S. processes."""
+    procs = get_running_jarvis_processes()
+    if not procs:
+        console.print("[dim]No running J.A.R.V.I.S. instances detected.[/dim]")
+        return
+
+    stopped_count = 0
+    for p in procs:
+        try:
+            p.terminate()
+            stopped_count += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    time.sleep(0.5)
+    for p in procs:
+        try:
+            if p.is_running():
+                p.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    console.print(f"[bold green][OK] Stopped {stopped_count} J.A.R.V.I.S. process(es). Port 8000 released.[/bold green]")
+
+
+def restart_command(args: argparse.Namespace) -> None:
+    """Restart J.A.R.V.I.S. background runner."""
+    console.print("[yellow]Stopping existing J.A.R.V.I.S. processes...[/yellow]")
+    stop_command(args)
+    time.sleep(1.0)
+    console.print("[cyan]Spawning fresh J.A.R.V.I.S. background instance...[/cyan]")
+    launch_command(args)
+
+
+def doctor_command(args: argparse.Namespace) -> None:
+    """Perform diagnostic health checks on local environment."""
+    table = Table(title="J.A.R.V.I.S. Environment Doctor", border_style="cyan")
+    table.add_column("Subsystem", style="bold cyan")
+    table.add_column("Status", justify="center")
+    table.add_column("Diagnostic Details", style="white")
+
+    # 1. Python & Core packages
+    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    table.add_row("Python Runtime", "[bold green]PASS[/bold green]", f"Python {py_ver} on Windows")
+
+    # 2. Audio Hardware
+    try:
+        import sounddevice as sd
+        in_dev = sd.query_devices(kind="input")
+        out_dev = sd.query_devices(kind="output")
+        table.add_row("Microphone", "[bold green]PASS[/bold green]", f"{in_dev['name'][:36]} ({int(in_dev['default_samplerate'])} Hz)")
+        table.add_row("Audio Output", "[bold green]PASS[/bold green]", f"{out_dev['name'][:36]}")
+    except Exception as e:
+        table.add_row("Audio Subsystem", "[bold red]FAIL[/bold red]", f"Audio device error: {e}")
+
+    # 3. Groq API Key & Endpoint
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if groq_key:
+        masked = groq_key[:6] + "..." + groq_key[-4:] if len(groq_key) > 10 else "***"
+        table.add_row("Groq API Key", "[bold green]PASS[/bold green]", f"Configured ({masked})")
+    else:
+        table.add_row("Groq API Key", "[bold red]MISSING[/bold red]", "Set in .env or run 'jarvis launch' to activate")
+
+    # 4. Port 8000
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        res = s.connect_ex(("127.0.0.1", 8000))
+        s.close()
+        if res == 0:
+            table.add_row("Port 8000 (HUD)", "[bold green]ONLINE[/bold green]", "Port 8000 is active (J.A.R.V.I.S. running)")
+        else:
+            table.add_row("Port 8000 (HUD)", "[bold green]AVAILABLE[/bold green]", "Port 8000 is free and ready")
+    except Exception as e:
+        table.add_row("Port 8000", "[yellow]UNKNOWN[/yellow]", str(e))
+
+    # 5. Desktop Shortcut
+    from jarvis.ui.autostart import get_windows_desktop_dir
+    dt_dir = get_windows_desktop_dir()
+    sc_path = dt_dir / "J.A.R.V.I.S..lnk"
+    if sc_path.is_file():
+        table.add_row("Desktop Icon", "[bold green]PASS[/bold green]", f"Shortcut installed at {sc_path.name}")
+    else:
+        table.add_row("Desktop Icon", "[yellow]MISSING[/yellow]", "Run 'jarvis autostart shortcut' or 'jarvis doctor --fix'")
+        if getattr(args, "fix", False):
+            from jarvis.ui.autostart import create_desktop_shortcut
+            created_path = create_desktop_shortcut()
+            console.print(f"[bold green][OK] Created missing desktop shortcut: {created_path}[/bold green]")
+
+    console.print(table)
+
+
 def main() -> None:
     """Main CLI entry point for 'jarvis' command."""
+    load_dotenv_if_present()
     parser = argparse.ArgumentParser(
         prog="jarvis",
         description="Jarvis - Local AI Desktop Agent",
@@ -856,10 +1091,39 @@ def main() -> None:
     brain_sub = brain_parser.add_subparsers(dest="brain_action", help="Brain actions")
     brain_sub.add_parser("models", help="List available models and tool/vision capabilities from Groq endpoint")
 
+    # 'jarvis launch' (silent background mode via pythonw)
+    subparsers.add_parser("launch", help="Launch J.A.R.V.I.S. in background with Web HUD, Voice, and Tray")
+
+    # 'jarvis status'
+    subparsers.add_parser("status", help="Check status of local J.A.R.V.I.S. background runner")
+
+    # 'jarvis stop'
+    subparsers.add_parser("stop", help="Stop all background J.A.R.V.I.S. processes and release port 8000")
+
+    # 'jarvis restart'
+    subparsers.add_parser("restart", help="Restart J.A.R.V.I.S. background runner cleanly")
+
+    # 'jarvis app' (100% standalone native desktop application)
+    app_parser = subparsers.add_parser("app", help="Launch 100% standalone native desktop application (no browser)")
+    app_parser.add_argument("--config", "-c", default="config.yaml")
+    app_parser.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
 
-    if args.command == "run":
+    if args.command == "app":
+        app_command(args)
+    elif args.command == "run":
         run_command(args)
+    elif args.command == "launch":
+        launch_command(args)
+    elif args.command == "status":
+        status_command(args)
+    elif args.command == "stop":
+        stop_command(args)
+    elif args.command == "restart":
+        restart_command(args)
+    elif args.command == "doctor":
+        doctor_command(args)
     elif args.command == "chat":
         chat_command(args)
     elif args.command == "voice":

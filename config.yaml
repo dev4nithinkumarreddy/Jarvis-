@@ -26,7 +26,19 @@ confirm_timeout_seconds: 30.0
 # apps:
 #   notepad: "notepad.exe"
 #   calc: "calc.exe"
-apps: {}
+apps:
+  notepad: "notepad.exe"
+  calc: "calc.exe"
+  calculator: "calc.exe"
+  chrome: "chrome.exe"
+  edge: "msedge.exe"
+  vscode: "code"
+  code: "code"
+  spotify: "spotify.exe"
+  explorer: "explorer.exe"
+  taskmgr: "taskmgr.exe"
+  terminal: "wt.exe"
+  cmd: "cmd.exe"
 
 # Allowed shell commands with fixed executable and argument validation rules
 # Example 1: git status check
