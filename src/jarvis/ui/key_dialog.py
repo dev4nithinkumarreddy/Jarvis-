@@ -21,10 +21,22 @@ def ensure_api_key(config_path: str = "config.yaml") -> bool:
     try:
         config = load_config(config_path)
         provider = config.brain.provider.lower()
+        base_url = getattr(config.brain, "base_url", "")
     except Exception:
         provider = "groq"
+        base_url = ""
 
-    key_var_name = "GROQ_API_KEY" if provider == "groq" else "ANTHROPIC_API_KEY"
+    # Local Ollama daemon requires no API key
+    if provider == "ollama" and ("localhost" in base_url or "127.0.0.1" in base_url or not base_url):
+        return True
+
+    if provider == "ollama":
+        key_var_name = "OLLAMA_API_KEY"
+    elif provider == "groq":
+        key_var_name = "GROQ_API_KEY"
+    else:
+        key_var_name = "ANTHROPIC_API_KEY"
+
     existing_key = os.environ.get(key_var_name, "").strip()
     if existing_key:
         return True
@@ -157,7 +169,9 @@ def prompt_api_key(provider: str = "groq", key_var_name: str = "GROQ_API_KEY") -
     entry.bind("<Button-3>", show_context_menu)
 
     # Info hint
-    if provider == "groq":
+    if provider == "ollama":
+        hint_text = "💡 Enter your remote Ollama bearer/API key, or leave blank if unauthenticated."
+    elif provider == "groq":
         hint_text = "💡 Don't have a key? Get one free at console.groq.com/keys"
     else:
         hint_text = "💡 Obtain your key from console.anthropic.com/settings/keys"

@@ -32,12 +32,14 @@ class JarvisTrayApp:
         on_kill_switch: Callable[[], None] | None = None,
         on_shutdown: Callable[[], None] | None = None,
         icon_path: Path | str = "data/icons/jarvis.ico",
+        enable_hotkey: bool = False,
     ) -> None:
         self.hud_url = hud_url
         self.on_open_app = on_open_app
         self.on_screen_analyze = on_screen_analyze
         self.on_kill_switch = on_kill_switch
         self.on_shutdown = on_shutdown
+        self.enable_hotkey = enable_hotkey
         self.icon_path = Path(icon_path)
 
         if not self.icon_path.exists():
@@ -132,22 +134,23 @@ class JarvisTrayApp:
             menu=self._build_menu(),
         )
 
-        # Register robust global summon hotkey (Ctrl+Alt+J)
-        try:
-            from jarvis.ui.hotkey import UniversalGlobalHotkey
+        # Register global summon hotkey if requested
+        if self.enable_hotkey:
+            try:
+                from jarvis.ui.hotkey import UniversalGlobalHotkey
 
-            def on_summon():
-                logger.info("Global summon shortcut triggered! Opening J.A.R.V.I.S....")
-                self._open_app()
+                def on_summon():
+                    logger.info("Global summon shortcut triggered! Opening J.A.R.V.I.S....")
+                    self._open_app()
 
-            self._hotkey_listener = UniversalGlobalHotkey(
-                callback=on_summon,
-                chord="ctrl+alt+j",
-            )
-            self._hotkey_listener.start()
-            logger.info("Global summon hotkey (Ctrl+Alt+J) active.")
-        except Exception as exc:
-            logger.debug("Summon hotkey registration skipped: %s", exc)
+                self._hotkey_listener = UniversalGlobalHotkey(
+                    callback=on_summon,
+                    chord="ctrl+alt+j",
+                )
+                self._hotkey_listener.start()
+                logger.info("Global summon hotkey (Ctrl+Alt+J) active.")
+            except Exception as exc:
+                logger.debug("Summon hotkey registration skipped: %s", exc)
 
         if blocking:
             self._icon.run()

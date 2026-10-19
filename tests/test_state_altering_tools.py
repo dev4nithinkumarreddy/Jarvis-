@@ -144,6 +144,30 @@ def test_open_app_allowlist_enforcement():
     assert "calc" in str(exc.value)
 
 
+def test_open_app_alias_normalization_and_arguments():
+    """open_app resolves common synonyms ('browser', 'google chrome') and passes launch arguments."""
+    mock_adapter = MagicMock(spec=OSAdapter)
+    allowed_apps = {"chrome": "chrome.exe", "vscode": "code"}
+    tool = create_open_app_tool(allowed_apps, os_adapter=mock_adapter)
+
+    # Alias 'browser' maps to 'chrome'
+    res = tool.handler(name="browser", argument="https://youtube.com")
+    assert "Successfully" in res
+    assert "https://youtube.com" in res
+    mock_adapter.open_app.assert_called_with("chrome.exe https://youtube.com")
+
+    # Alias 'google chrome' maps to 'chrome'
+    res2 = tool.handler(name="google chrome")
+    assert "Successfully" in res2
+    mock_adapter.open_app.assert_called_with("chrome.exe")
+
+    # Alias 'vs code' maps to 'vscode'
+    res3 = tool.handler(name="vs code")
+    assert "Successfully" in res3
+    mock_adapter.open_app.assert_called_with("code")
+
+
+
 def test_open_path(tmp_path: Path):
     """open_path opens existing files via os_adapter within allowed root."""
     sandbox = tmp_path / "sandbox"
@@ -421,3 +445,100 @@ def test_acceptance_create_note_confirmed_and_denied(tmp_path: Path):
     # Audit log confirms denial record
     log_lines = audit_log.read_text(encoding="utf-8").strip().splitlines()
     assert any("User denied confirmation" in line for line in log_lines)
+
+
+def test_set_system_volume_tool():
+    """Verify set_system_volume tool spec and handler behavior."""
+    from unittest.mock import MagicMock, patch
+    from jarvis.tools.system_tools import create_set_volume_tool, set_system_volume
+
+    spec = create_set_volume_tool()
+    assert spec.name == "set_system_volume"
+    assert spec.risk_tier == RiskTier.CONFIRM
+
+    mock_volume = MagicMock()
+    mock_volume.GetMute.return_value = 0
+    mock_devices = MagicMock()
+    mock_devices.EndpointVolume = mock_volume
+
+    with patch("pycaw.pycaw.AudioUtilities.GetSpeakers", return_value=mock_devices):
+        res = set_system_volume(65)
+        assert res["status"] == "success"
+        assert res["volume_percent"] == 65
+        assert mock_volume.SetMasterVolumeLevelScalar.called
+
+
+def test_mute_system_volume_tool():
+    """Verify mute_system_volume tool toggles or sets mute status."""
+    from unittest.mock import MagicMock, patch
+    from jarvis.tools.system_tools import create_mute_volume_tool, mute_system_volume
+
+    spec = create_mute_volume_tool()
+    assert spec.name == "mute_system_volume"
+    assert spec.risk_tier == RiskTier.CONFIRM
+
+    mock_volume = MagicMock()
+    mock_volume.GetMute.return_value = 0
+    mock_volume.GetMasterVolumeLevelScalar.return_value = 0.5
+    mock_devices = MagicMock()
+    mock_devices.EndpointVolume = mock_volume
+
+    with patch("pycaw.pycaw.AudioUtilities.GetSpeakers", return_value=mock_devices):
+        res = mute_system_volume(mute=True)
+        assert res["status"] == "success"
+        assert res["muted"] is True
+        mock_volume.SetMute.assert_called_with(1, None)
+
+
+def test_lock_workstation_tool():
+    """Verify lock_workstation triggers LockWorkStation Windows API."""
+    from unittest.mock import patch
+    from jarvis.tools.system_tools import create_lock_workstation_tool, lock_workstation
+
+    spec = create_lock_workstation_tool()
+    assert spec.name == "lock_workstation"
+    assert spec.risk_tier == RiskTier.CONFIRM
+
+    with patch("ctypes.windll.user32.LockWorkStation", return_value=1):
+        res = lock_workstation()
+        assert res["status"] == "success"
+        assert res["locked"] is True
+
+
+def test_state_altering_tools_includes_volume_and_lock():
+    """Verify create_state_altering_tools registers volume and lock tools."""
+    from jarvis.tools import create_state_altering_tools
+    tools = create_state_altering_tools(
+        allowed_roots=[],
+        allowed_apps={},
+        allowed_commands={},
+    )
+    names = [t.name for t in tools]
+    assert "set_system_volume" in names
+    assert "mute_system_volume" in names
+    assert "lock_workstation" in names
+
+
+def test_windows_os_adapter_open_app_resolution():
+    """Verify WindowsOSAdapter.open_app resolves executables via PATH, registry, and fallback."""
+    from unittest.mock import patch
+    from jarvis.platform.os_adapter import WindowsOSAdapter
+
+    adapter = WindowsOSAdapter()
+
+    # Case 1: shutil.which resolves in PATH
+    with patch("shutil.which", return_value="C:\\Windows\\notepad.exe"), \
+         patch("subprocess.Popen") as mock_popen:
+        assert adapter.open_app("notepad.exe") is True
+        mock_popen.assert_called_with(["C:\\Windows\\notepad.exe"], shell=False)
+
+    # Case 2: shutil.which is None, resolved via App Paths registry mock
+    with patch("shutil.which", return_value=None), \
+         patch("winreg.OpenKey"), \
+         patch("winreg.QueryValueEx", return_value=("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", None)), \
+         patch("pathlib.Path.exists", return_value=True), \
+         patch("subprocess.Popen") as mock_popen:
+        assert adapter.open_app("chrome.exe https://example.com") is True
+        mock_popen.assert_called_with(["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "https://example.com"], shell=False)
+
+

@@ -68,20 +68,41 @@ from jarvis.safety.killswitch import get_kill_switch
 from jarvis.ui.cli import create_orchestrator
 from jarvis.ui.hotkey import UniversalGlobalHotkey
 from jarvis.ui.key_dialog import ensure_api_key
+from jarvis.ui.floating_dock import FloatingArcReactorWidget
 from jarvis.ui.native_app import JarvisNativeApp
 from jarvis.ui.tray import JarvisTrayApp
 from jarvis.voice.audio_in import AudioCapture
 from jarvis.voice.channel import VoiceChannel, generate_jarvis_greeting
 from jarvis.voice.stt import FasterWhisperSTT
-from jarvis.voice.triggers import PushToTalkTrigger
+from jarvis.voice.triggers import PushToTalkTrigger, record_speech_with_vad
 from jarvis.voice.tts import PiperTTS, Pyttsx3TTS
 
 _instance_lock_socket: socket.socket | None = None
 LOCK_PORT = 48999
 
 
+def kill_stale_instance_on_port(port: int = LOCK_PORT) -> None:
+    """Identify and terminate any stale zombie process holding the lock port."""
+    try:
+        import subprocess
+        cmd = f"netstat -ano -p tcp | findstr :{port}"
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        for line in res.stdout.strip().splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[1].endswith(f":{port}"):
+                pid = parts[-1]
+                if pid.isdigit() and int(pid) != os.getpid():
+                    logger.warning("Terminating stale zombie process PID %s holding port %s", pid, port)
+                    subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+        time.sleep(0.3)
+    except Exception as exc:
+        logger.debug("Failed to kill stale instance: %s", exc)
+
+
 def acquire_single_instance_or_summon() -> bool:
-    """Ensure single instance. If already running, send summon signal and exit."""
+    """Ensure single instance. If already running and responsive, send summon signal and exit.
+    If unresponsive or zombie, terminate stale instance and claim lock.
+    """
     global _instance_lock_socket
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -90,19 +111,34 @@ def acquire_single_instance_or_summon() -> bool:
         _instance_lock_socket = s
         return True
     except OSError:
-        # Another instance is already active. Send summon trigger to it.
+        # Port occupied. Verify if active instance responds with ACK_SUMMON
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.settimeout(2.0)
+            client.settimeout(0.8)
             client.connect(("127.0.0.1", LOCK_PORT))
             client.sendall(b"SUMMON\n")
+            reply = client.recv(64)
             client.close()
+            if b"ACK_SUMMON" in reply:
+                logger.info("Active J.A.R.V.I.S. instance confirmed summon. Exiting second launcher.")
+                return False
         except Exception as exc:
-            logger.debug("Failed to signal existing instance: %s", exc)
-        return False
+            logger.warning("Existing instance unresponsive (%s). Clearing stale lock...", exc)
+
+        # Stale or dead process holding port: kill and recover!
+        kill_stale_instance_on_port(LOCK_PORT)
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(("127.0.0.1", LOCK_PORT))
+            s.listen(5)
+            _instance_lock_socket = s
+            return True
+        except Exception as exc:
+            logger.error("Failed to re-bind port after stale process termination: %s", exc)
+            return True
 
 
-def start_summon_listener(app: JarvisNativeApp, stop_event: threading.Event) -> None:
+def start_summon_listener(app: Any, stop_event: threading.Event) -> None:
     """Listen for summon triggers from subsequent desktop icon launches."""
     global _instance_lock_socket
     if not _instance_lock_socket:
@@ -114,10 +150,16 @@ def start_summon_listener(app: JarvisNativeApp, stop_event: threading.Event) -> 
             try:
                 conn, _ = _instance_lock_socket.accept()
                 data = conn.recv(64)
-                conn.close()
                 if b"SUMMON" in data:
+                    try:
+                        conn.sendall(b"ACK_SUMMON\n")
+                    except Exception:
+                        pass
+                    conn.close()
                     logger.info("Received external summon signal. Bringing app to foreground.")
                     app.summon()
+                else:
+                    conn.close()
             except socket.timeout:
                 continue
             except Exception:
@@ -174,7 +216,7 @@ def main() -> None:
     stop_event = threading.Event()
 
     # Placeholders to resolve forward references
-    app_ref: list[JarvisNativeApp | None] = [None]
+    app_ref: list[Any] = [None]
 
     def on_submit_handler(text: str) -> None:
         if not app_ref[0]:
@@ -201,58 +243,72 @@ def main() -> None:
         app.channel.say("Analyzing display screen now, Sir.")
         speak_async("Analyzing display screen now, Sir.")
         try:
-            reply = orchestrator.run_turn("Jarvis, please analyze my current desktop screen.")
+            reply = orchestrator.run_turn("Jarvis, inspect my desktop screen using take_screenshot and give me a concise situational status report.")
             app.channel.say(reply)
             speak_async(reply)
         except Exception as err:
             logger.exception("Screen analysis error:")
             app.channel.say(f"Screen vision failed: {err}")
+            speak_async("Screen analysis encountered an issue, Sir.")
         finally:
             app.set_state("ONLINE")
 
-    # 4. Instantiate Native Desktop Application
-    app = JarvisNativeApp(
+    # Voice Channel holder for interactive mic button
+    v_channel_holder: list[Any] = [None]
+
+    def on_voice_toggle_handler() -> None:
+        v_chan = v_channel_holder[0]
+        if not v_chan:
+            if app_ref[0]:
+                app_ref[0].post_response("Voice engine is warming up, Sir. Hold [Spacebar] or click 🎙️ MIC in a moment.")
+                speak_async("Voice engine is warming up, Sir.")
+            return
+
+        def _mic_task() -> None:
+            if not app_ref[0]:
+                return
+            app = app_ref[0]
+            try:
+                app.set_state("LISTENING")
+                app.post_response("Listening... Speak your directive now, Sir.")
+                # Record directly with voice activity detection (no spacebar press required)
+                audio = record_speech_with_vad(v_chan.capture, max_seconds=12.0, silence_seconds=1.2)
+                if len(audio) > 0:
+                    spoken = v_chan.stt.transcribe(audio).strip()
+                else:
+                    spoken = ""
+                if spoken:
+                    app.post_response(f"User: {spoken}")
+                    on_submit_handler(spoken)
+                else:
+                    app.set_state("ONLINE")
+                    app.post_response("No speech detected. Ready for your directive, Sir.")
+            except Exception as exc:
+                logger.warning("Mic recording error: %s", exc)
+                app.set_state("ONLINE")
+
+        threading.Thread(target=_mic_task, daemon=True).start()
+
+    # 4. Instantiate Frameless Floating Arc Reactor Desktop Widget
+    app = FloatingArcReactorWidget(
         on_user_submit=on_submit_handler,
         on_screen_analyze=on_screen_analyze_handler,
+        on_voice_toggle=on_voice_toggle_handler,
         on_kill_switch=lambda: kill_switch.trigger(),
+        on_speech_stop=tts.stop,
+        on_model_change=lambda new_m: orchestrator.set_model(new_m),
         user_title=user_title,
         model_name=model_name,
+        size=110,
     )
     app_ref[0] = app
+    app.update()
 
     # 5. Composite Confirmer & Output
     active_confirmers = [app.channel]
     active_outputs = [app.channel]
 
-    voice_channel = None
-    try:
-        audio_capture = AudioCapture(
-            sample_rate=config.voice.sample_rate,
-            device=config.voice.input_device,
-        )
-        stt = FasterWhisperSTT(
-            model_size=config.voice.stt_model,
-            device=config.voice.stt_device,
-            language=getattr(config.voice, "language", "en"),
-        )
-        stt.warmup(async_mode=True)
-        trigger = PushToTalkTrigger(
-            capture=audio_capture,
-            key_name=config.voice.ptt_key,
-        )
-        voice_channel = VoiceChannel(
-            stt=stt,
-            tts=tts,
-            trigger=trigger,
-            capture=audio_capture,
-            config=config,
-        )
-        active_confirmers.append(voice_channel)
-    except Exception as exc:
-        logger.warning("Microphone voice channel unavailable, operating in text-only mode: %s", exc)
-
     composite_confirmer = CompositeConfirmer(active_confirmers)
-
     audit_logger = AuditLogger(config.audit_log_path)
     orchestrator = create_orchestrator(
         config_path=config_path,
@@ -268,19 +324,46 @@ def main() -> None:
     # 7. Single-instance summon listener
     start_summon_listener(app, stop_event)
 
-    # 8. Background Voice Listener Thread (Push-to-Talk)
-    if voice_channel is not None:
-        def voice_worker() -> None:
+    # 8. Asynchronous Background Voice Engine Initialization (Zero GUI blocking)
+    def _init_voice_subsystem() -> None:
+        try:
+            audio_capture = AudioCapture(
+                sample_rate=config.voice.sample_rate,
+                device=config.voice.input_device,
+            )
+            stt = FasterWhisperSTT(
+                model_size=config.voice.stt_model,
+                device=config.voice.stt_device,
+                language=getattr(config.voice, "language", "en"),
+            )
+            stt.warmup(async_mode=False)
+            trigger = PushToTalkTrigger(
+                capture=audio_capture,
+                key_name=config.voice.ptt_key,
+            )
+            v_channel = VoiceChannel(
+                stt=stt,
+                tts=tts,
+                trigger=trigger,
+                capture=audio_capture,
+                config=config,
+            )
+            v_channel_holder[0] = v_channel
+            active_confirmers.append(v_channel)
+            logger.info("Background Voice Engine loaded and listening.")
+
             while not stop_event.is_set():
                 try:
-                    user_spoken = voice_channel.get_user_input()
+                    user_spoken = v_channel.get_user_input()
                     if user_spoken and not stop_event.is_set():
-                        app.post_message(user_title.upper(), user_spoken, is_user=True)
+                        app.post_response(f"User: {user_spoken}")
                         on_submit_handler(user_spoken)
                 except Exception:
                     time.sleep(0.1)
+        except Exception as exc:
+            logger.warning("Microphone voice channel unavailable, running in text-only mode: %s", exc)
 
-        threading.Thread(target=voice_worker, daemon=True).start()
+    threading.Thread(target=_init_voice_subsystem, daemon=True).start()
 
     # 9. Windows System Tray Companion
     def shutdown_action() -> None:
@@ -300,13 +383,19 @@ def main() -> None:
         on_screen_analyze=on_screen_analyze_handler,
         on_kill_switch=lambda: kill_switch.trigger(),
         on_shutdown=shutdown_action,
+        enable_hotkey=False,
     )
     tray_app.start(blocking=False)
 
-    # 10. Proactive Vocal Greeting on Startup!
+    # 10. Proactive Vocal Greeting on Startup & Initial Display
     greeting_text = generate_jarvis_greeting(user_title)
-    app.channel.say(greeting_text)
+    app.post_response(greeting_text)
     speak_async(greeting_text)
+
+    # Float the Arc Reactor on top in pure circular form!
+    app.deiconify()
+    app.lift()
+    app.attributes("-topmost", True)
 
     # 11. Run Tkinter Event Loop
     try:

@@ -33,6 +33,17 @@ class TTSEngine(ABC):
         """Engine-specific synthesis and playback implementation."""
         pass
 
+    def stop(self) -> None:
+        """Interrupt and silence any ongoing speech synthesis or playback."""
+        self._is_speaking = False
+        if self._muter:
+            self._muter(False)
+        self._stop_impl()
+
+    def _stop_impl(self) -> None:
+        """Subclass override for engine-specific speech cancellation."""
+        pass
+
     def speak(self, text: str) -> None:
         """Speak the given text while coordinating microphone muting."""
         if not text.strip():
@@ -50,37 +61,96 @@ class TTSEngine(ABC):
                     self._muter(False)
 
 
+
 def clean_text_for_speech(text: str) -> str:
-    """Strip markdown formatting, URLs, code blocks, and symbols for natural TTS."""
+    """Transform raw LLM output and markdown tables into smooth, natural spoken conversational dialogue."""
     if not text:
         return ""
     import re
 
-    # Remove code blocks ```...```
+    # 1. Remove code blocks ```...```
     cleaned = re.sub(r"```[\s\S]*?```", " code block omitted. ", text)
     # Remove inline code `...`
     cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
     # Remove markdown links [text](url) -> text
     cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
-    # Remove markdown headers #, ##, etc.
+
+    # 2. Phonetically normalize J.A.R.V.I.S. so TTS engines pronounce it as "Jarvis" rather than individual letters
+    cleaned = re.sub(r"(?i)\bj(?:\.|\s*)*a(?:\.|\s*)*r(?:\.|\s*)*v(?:\.|\s*)*i(?:\.|\s*)*s\.?", "Jarvis", cleaned)
+
+    # 2. Transmute markdown tables into fluent spoken clauses
+    lines: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        # Table delimiter line e.g. |---|---|
+        if re.match(r"^\s*\|?\s*[-:]+[-| :]+\|?\s*$", line):
+            continue
+        # Table row check
+        if line.startswith("|") or (line.count("|") >= 2):
+            cells = [c.strip() for c in line.strip("|").split("|") if c.strip()]
+            if not cells:
+                continue
+            # Skip purely generic table headers (e.g. Component | Status)
+            c0_lower = cells[0].lower()
+            clast_lower = cells[-1].lower()
+            if any(h in c0_lower for h in ("component", "metric", "item", "parameter", "key")) and any(
+                h in clast_lower for h in ("status", "value", "details", "condition", "state")
+            ):
+                continue
+            if len(cells) == 2:
+                lines.append(f"{cells[0]}: {cells[1]}.")
+            else:
+                lines.append(", ".join(cells) + ".")
+            continue
+        # Bullet list item e.g. - Point 1 or * Point 1
+        bullet_m = re.match(r"^[\*\-\+]\s+(.*)", line)
+        if bullet_m:
+            lines.append(bullet_m.group(1))
+            continue
+        lines.append(line)
+
+    cleaned = " ".join(lines)
+
+    # 3. Remove markdown headers #, ##, etc.
     cleaned = re.sub(r"^[#]+\s*", "", cleaned, flags=re.MULTILINE)
-    # Remove bold/italic markers
+    # Remove bold/italic markers **bold**, *italic*, __bold__
     cleaned = re.sub(r"[*_]{1,3}([^*_]+)[*_]{1,3}", r"\1", cleaned)
+    # Remove remaining orphan asterisks and bullet symbols
+    cleaned = cleaned.replace("*", "").replace("◆", "").replace("•", "")
     # Remove blockquotes
     cleaned = re.sub(r"^\s*>\s*", "", cleaned, flags=re.MULTILINE)
     # Remove bullet markers
-    cleaned = re.sub(r"^\s*[-*+]\s+", "", cleaned, flags=re.MULTILINE)
-    # Normalize fancy quotes and dashes
+    cleaned = re.sub(r"^\s*[-+]\s+", "", cleaned, flags=re.MULTILINE)
+    # Turn any stray pipes into natural pauses (commas)
+    cleaned = cleaned.replace("|", ", ")
+
+    # 4. Symbol & technical unit expansions for natural British butler delivery
+    cleaned = re.sub(r"(\d+)\s*%", r"\1 percent", cleaned)
+    cleaned = re.sub(r"(\d+(?:\.\d+)?)\s*GB\b", r"\1 gigabytes", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(\d+(?:\.\d+)?)\s*MB\b", r"\1 megabytes", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(\d+(?:\.\d+)?)\s*TB\b", r"\1 terabytes", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"°C\b", " degrees Celsius", cleaned)
+    cleaned = re.sub(r"°F\b", " degrees Fahrenheit", cleaned)
+    cleaned = re.sub(r"\bkm/h\b|\bkmph\b", " kilometers per hour", cleaned, flags=re.IGNORECASE)
+
+    # 5. Normalize quotes, dashes, and cadence
     cleaned = cleaned.replace("“", '"').replace("”", '"')
     cleaned = cleaned.replace("‘", "'").replace("’", "'")
     cleaned = cleaned.replace("—", " - ").replace("–", " - ")
-    # Collapse multiple whitespace
+
+    # 6. Clean up duplicate punctuation and whitespace
+    cleaned = re.sub(r",\s*,+", ", ", cleaned)
+    cleaned = re.sub(r"\.+\s*\.+", ". ", cleaned)
+    cleaned = re.sub(r"\s*([.,;:])", r"\1 ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
 
+
 class Pyttsx3TTS(TTSEngine):
-    """Local offline TTS engine using pyttsx3 with sounddevice audio output."""
+    """Local offline TTS engine using Windows SAPI5 / pyttsx3 with guaranteed multi-turn voice playback."""
 
     def __init__(
         self,
@@ -90,59 +160,87 @@ class Pyttsx3TTS(TTSEngine):
         super().__init__()
         self.rate = rate
         self.device = device
-        self._engine = None
-
-    def _get_engine(self):
-        if self._engine is None:
-            import pyttsx3
-            self._engine = pyttsx3.init()
-            self._engine.setProperty("rate", self.rate)
-        return self._engine
+        import sys
+        self._is_windows = sys.platform == "win32"
 
     def _speak_impl(self, text: str) -> None:
         clean_text = clean_text_for_speech(text)
         if not clean_text:
             return
 
-        import os
-        import tempfile
-        import wave
-        import sounddevice as sd
-        import numpy as np
-
-        engine = self._get_engine()
-        tmp_wav = os.path.join(
-            tempfile.gettempdir(),
-            f"jarvis_tts_{os.getpid()}_{threading.get_ident()}.wav",
-        )
-        try:
-            engine.save_to_file(clean_text, tmp_wav)
-            engine.runAndWait()
-
-            if os.path.exists(tmp_wav) and os.path.getsize(tmp_wav) > 44:
-                with wave.open(tmp_wav, "rb") as wf:
-                    sr = wf.getframerate()
-                    raw = wf.readframes(wf.getnframes())
-                if raw:
-                    audio_data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                    sd.play(audio_data, samplerate=sr, device=self.device)
-                    sd.wait()
-            else:
-                engine.say(clean_text)
-                engine.runAndWait()
-        except Exception as exc:
-            logger.warning(f"Error during audio playback via sounddevice: {exc}")
+        # 1. On Windows, use native COM SAPI.SpVoice directly (zero event loop hangs, 100% reliable)
+        if self._is_windows:
             try:
-                engine.say(clean_text)
-                engine.runAndWait()
+                import pythoncom
+                import win32com.client
+                pythoncom.CoInitialize()
+                try:
+                    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                    # Map rate: pyttsx3 uses ~190 WPM; SAPI5 uses -10 to 10 where 0 is normal, 1 is slightly faster
+                    if -10 <= self.rate <= 10:
+                        sapi_rate = self.rate
+                    else:
+                        sapi_rate = max(-10, min(10, int((self.rate - 150) / 25)))
+                    speaker.Rate = sapi_rate
+                    speaker.Volume = 100
+                    # 0 = SVSFDefault (synchronous playback, coordinates properly with mic muting)
+                    speaker.Speak(clean_text, 0)
+                    return
+                finally:
+                    pythoncom.CoUninitialize()
+            except Exception as exc:
+                logger.warning("Native SAPI.SpVoice error (%s), attempting fallback...", exc)
+
+        # 2. Secondary fallback for Linux/macOS or if COM dispatch failed: pyttsx3 per-utterance
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.setProperty("rate", self.rate)
+            engine.say(clean_text)
+            engine.runAndWait()
+            try:
+                engine.stop()
             except Exception:
                 pass
-        finally:
-            if os.path.exists(tmp_wav):
+            return
+        except Exception as exc:
+            logger.warning("pyttsx3 speech fallback failed: %s", exc)
+
+        # 3. Last-resort fallback on Windows via PowerShell SpeechSynthesizer
+        if self._is_windows:
+            try:
+                import subprocess
+                ps_script = (
+                    "Add-Type -AssemblyName System.Speech; "
+                    "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                    f"$synth.Speak([Console]::In.ReadToEnd())"
+                )
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_script],
+                    input=clean_text,
+                    text=True,
+                    timeout=20,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except Exception as exc:
+                logger.error("PowerShell speech synthesizer fallback failed: %s", exc)
+
+    def _stop_impl(self) -> None:
+        """Interrupt active SAPI5 speech utterance on Windows."""
+        if self._is_windows:
+            try:
+                import pythoncom
+                import win32com.client
+                pythoncom.CoInitialize()
                 try:
-                    os.remove(tmp_wav)
-                except OSError:
-                    pass
+                    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                    # SVSFPurgeBeforeSpeak (2) purges pending and active speech
+                    speaker.Speak("", 2)
+                finally:
+                    pythoncom.CoUninitialize()
+            except Exception as exc:
+                logger.debug("Failed to purge SAPI speech: %s", exc)
+
 
 
 class PiperTTS(TTSEngine):
@@ -198,6 +296,16 @@ class PiperTTS(TTSEngine):
             else:
                 raise
 
+    def _stop_impl(self) -> None:
+        """Interrupt Piper audio stream and fallback engine."""
+        try:
+            import sounddevice as sd
+            sd.stop()
+        except Exception:
+            pass
+        if self.fallback_tts is not None:
+            self.fallback_tts.stop()
+
 
 class MockTTS(TTSEngine):
     """Mock TTS engine recording utterances for fast, silent testing."""
@@ -205,6 +313,11 @@ class MockTTS(TTSEngine):
     def __init__(self) -> None:
         super().__init__()
         self.spoken_texts: list[str] = []
+        self.stopped = False
 
     def _speak_impl(self, text: str) -> None:
         self.spoken_texts.append(text)
+
+    def _stop_impl(self) -> None:
+        self.stopped = True
+

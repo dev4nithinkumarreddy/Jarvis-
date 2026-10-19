@@ -8,6 +8,7 @@ from typing import Any
 
 from jarvis.brain.base import Brain
 from jarvis.brain.groq_brain import GroqBrain, GroqRateLimitExceededError
+from jarvis.brain.ollama_brain import OllamaBrain
 from jarvis.core.channels import Confirmer, OutputChannel
 from jarvis.core.config import JarvisConfig
 from jarvis.core.types import SessionState, ToolResult
@@ -70,7 +71,7 @@ class Orchestrator:
         )
         if config is not None and getattr(config, "brain", None) is not None and getattr(config.brain, "history_turns", None) is not None:
             self.history_turns = config.brain.history_turns
-        elif config is not None and getattr(config, "brain", None) is not None and getattr(config.brain, "provider", "") == "groq":
+        elif config is not None and getattr(config, "brain", None) is not None and getattr(config.brain, "provider", "") in ("groq", "ollama"):
             self.history_turns = 4
         elif config is not None and getattr(config, "memory", None) is not None:
             self.history_turns = config.memory.history_turns
@@ -82,6 +83,12 @@ class Orchestrator:
     def reset_conversation(self) -> None:
         """Clear conversation message history."""
         self.messages.clear()
+
+    def set_model(self, model_name: str) -> None:
+        """Dynamically update active neural model on the active brain."""
+        if hasattr(self.brain, "model"):
+            self.brain.model = model_name
+        logger.info("Orchestrator active model changed to: %s", model_name)
 
     def _get_memory_context(self, user_text: str) -> str | None:
         """Retrieve stored facts from MemoryStore within character budget."""
@@ -237,13 +244,13 @@ class Orchestrator:
                         self.memory_store.log_conversation("assistant", final_text)
                 return final_text
 
-            is_groq = isinstance(self.brain, GroqBrain) or (
+            is_openai_format = isinstance(self.brain, (GroqBrain, OllamaBrain)) or (
                 self.config is not None
                 and getattr(self.config, "brain", None) is not None
-                and getattr(self.config.brain, "provider", "") == "groq"
+                and getattr(self.config.brain, "provider", "") in ("groq", "ollama")
             )
 
-            if is_groq:
+            if is_openai_format:
                 tool_calls_payload: list[dict[str, Any]] = []
                 for call in brain_response.tool_calls:
                     if "_raw_arguments" in call.arguments:
@@ -428,7 +435,7 @@ class Orchestrator:
 
                 wrapped_data = f"<tool_output_data>\n{content_body}\n</tool_output_data>"
 
-                if is_groq:
+                if is_openai_format:
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": call.id,
@@ -458,7 +465,7 @@ class Orchestrator:
                         "is_error": not tool_result.ok,
                     })
 
-            if not is_groq and tool_result_blocks:
+            if not is_openai_format and tool_result_blocks:
                 # Append tool results as user message
                 self.messages.append({
                     "role": "user",

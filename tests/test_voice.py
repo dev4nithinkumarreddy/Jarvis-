@@ -599,6 +599,29 @@ def test_clean_text_for_speech_unicode_quotes() -> None:
     assert "'test'" in cleaned
 
 
+def test_clean_text_for_speech_table_and_conversational_transmutation() -> None:
+    """clean_text_for_speech transmutes raw markdown tables and symbols into fluent spoken phrasing."""
+    table_raw = (
+        "Here is the status report:\n"
+        "| Component | Status |\n"
+        "|---|---|\n"
+        "| CPU | 39% |\n"
+        "| RAM | 16 GB |\n"
+        "| Core Temp | 42°C |\n"
+    )
+    cleaned = clean_text_for_speech(table_raw)
+    # No pipes, no dashes separator, no unexpanded symbols
+    assert "|" not in cleaned
+    assert "|---|" not in cleaned
+    assert "percent" in cleaned
+    assert "gigabytes" in cleaned
+    assert "degrees Celsius" in cleaned
+    assert "CPU: 39 percent" in cleaned
+    assert "RAM: 16 gigabytes" in cleaned
+    assert "Core Temp: 42 degrees Celsius" in cleaned
+
+
+
 def test_pyttsx3_tts_device_configuration() -> None:
     """Pyttsx3TTS accepts device parameter and stores it."""
     tts_default = Pyttsx3TTS()
@@ -616,5 +639,53 @@ def test_audio_capture_list_output_devices() -> None:
         assert "name" in dev
         assert "channels" in dev
         assert dev["channels"] > 0
+
+
+def test_tts_stop_method() -> None:
+    """Verify TTSEngine.stop() marks engine stopped and resets speaking state."""
+    mock_tts = MockTTS()
+    assert mock_tts.stopped is False
+    mock_tts._is_speaking = True
+    muter_calls = []
+    mock_tts.set_capture_muter(lambda m: muter_calls.append(m))
+
+    mock_tts.stop()
+    assert mock_tts.stopped is True
+    assert mock_tts.is_speaking() is False
+    assert False in muter_calls
+
+
+def test_play_ptt_tone_cinematic_profiles() -> None:
+    """Verify play_ptt_tone handles all acoustic sound profiles cleanly."""
+    from jarvis.voice.triggers import play_ptt_tone
+    # Must not raise on any known tone type
+    play_ptt_tone("start")
+    play_ptt_tone("stop")
+    play_ptt_tone("stop_speech")
+    play_ptt_tone("cancel")
+    play_ptt_tone("summon")
+
+
+def test_clean_text_for_speech_jarvis_pronunciation() -> None:
+    """Verify J.A.R.V.I.S. is transformed into natural spoken word 'Jarvis' instead of individual letters."""
+    raw = "Good evening, Nithin Sir. J.A.R.V.I.S. is at your service. All systems nominal."
+    cleaned = clean_text_for_speech(raw)
+    assert "J.A.R.V.I.S." not in cleaned
+    assert "J. A. R. V. I. S." not in cleaned
+    assert "Jarvis is at your service." in cleaned
+
+    # Also check case variations
+    raw_lower = "j.a.r.v.i.s. online and ready."
+    assert "Jarvis online and ready." in clean_text_for_speech(raw_lower)
+
+
+def test_generate_jarvis_greeting_with_user_title() -> None:
+    """Verify greeting generator addresses Nithin Sir and references Jarvis."""
+    from jarvis.voice.channel import generate_jarvis_greeting
+    greeting = generate_jarvis_greeting("Nithin Sir")
+    assert "Nithin Sir" in greeting
+    assert "J.A.R.V.I.S. is at your service" in greeting
+
+
 
 

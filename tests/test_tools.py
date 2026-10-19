@@ -147,3 +147,68 @@ def test_search_files_tool(tmp_path: Path):
     assert len(py_files) == 2
     assert any("alpha.py" in f for f in py_files)
     assert any("gamma.py" in f for f in py_files)
+
+
+def test_battery_status_tool():
+    """Verify battery_status tool retrieves valid battery dictionary."""
+    from jarvis.tools.system_tools import create_battery_status_tool, get_battery_status
+    spec = create_battery_status_tool()
+    assert spec.name == "battery_status"
+    assert spec.risk_tier == RiskTier.AUTO
+
+    res = get_battery_status()
+    assert isinstance(res, dict)
+    assert "has_battery" in res
+    assert "message" in res
+
+
+def test_weather_tool():
+    """Verify get_weather retrieves structured weather details."""
+    from unittest.mock import MagicMock, patch
+    from jarvis.tools.system_tools import create_weather_tool, get_weather
+
+    spec = create_weather_tool()
+    assert spec.name == "get_weather"
+    assert spec.risk_tier == RiskTier.AUTO
+
+    fake_json = {
+        "nearest_area": [{"areaName": [{"value": "Metropolis"}], "country": [{"value": "US"}]}],
+        "current_condition": [
+            {
+                "temp_C": "22",
+                "temp_F": "72",
+                "FeelsLikeC": "21",
+                "weatherDesc": [{"value": "Sunny"}],
+                "humidity": "45",
+                "windspeedKmph": "10",
+            }
+        ],
+    }
+
+    class FakeResponse:
+        def read(self):
+            import json
+            return json.dumps(fake_json).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    with patch("urllib.request.urlopen", return_value=FakeResponse()):
+        res = get_weather("Metropolis")
+        assert res["status"] == "success"
+        assert "Metropolis" in res["location"]
+        assert res["temperature_c"] == "22"
+        assert res["condition"] == "Sunny"
+
+
+def test_read_only_tools_includes_all_system_inspection_tools(tmp_path: Path):
+    """Verify create_read_only_tools includes system_info, time, battery, and weather."""
+    from jarvis.tools import create_read_only_tools
+    tools = create_read_only_tools([tmp_path])
+    tool_names = [t.name for t in tools]
+    assert "system_info" in tool_names
+    assert "current_time" in tool_names
+    assert "battery_status" in tool_names
+    assert "get_weather" in tool_names
+

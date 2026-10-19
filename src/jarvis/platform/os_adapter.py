@@ -42,9 +42,50 @@ class WindowsOSAdapter(OSAdapter):
     """Windows-specific OS adapter implementation."""
 
     def open_app(self, command: str) -> bool:
-        """Launch an application command on Windows without shell=True."""
+        """Launch an application command on Windows with multi-stage executable resolution."""
+        import shutil
+        import winreg
+
         try:
             cmd_parts = shlex.split(command, posix=False)
+            if not cmd_parts:
+                raise ValueError("Empty application command string.")
+
+            exe = cmd_parts[0]
+            args = cmd_parts[1:]
+
+            # 1. Direct path exists (only if contains path separators)
+            if ("\\" in exe or "/" in exe) and Path(exe).exists():
+                subprocess.Popen(cmd_parts, shell=False)
+                return True
+
+            # 2. Executable in system PATH
+            found_path = shutil.which(exe)
+            if found_path:
+                subprocess.Popen([found_path] + args, shell=False)
+                return True
+
+            # 3. Check Windows App Paths Registry (e.g. chrome.exe, msedge.exe)
+            reg_name = exe if exe.lower().endswith(".exe") else f"{exe}.exe"
+            for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                key_path = f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{reg_name}"
+                try:
+                    with winreg.OpenKey(root, key_path) as k:
+                        app_path, _ = winreg.QueryValueEx(k, "")
+                        if app_path and Path(app_path).exists():
+                            subprocess.Popen([app_path] + args, shell=False)
+                            return True
+                except Exception:
+                    pass
+
+            # 4. Fallback to Windows ShellExecute / os.startfile
+            try:
+                os.startfile(command)
+                return True
+            except Exception:
+                pass
+
+            # 5. Final attempt with original command parts
             subprocess.Popen(cmd_parts, shell=False)
             return True
         except Exception as exc:

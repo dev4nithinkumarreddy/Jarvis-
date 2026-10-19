@@ -3,16 +3,21 @@ allowed_roots:
   - "."
 
 # LLM Brain configuration
-# Supported providers: "anthropic", "groq"
+# Supported providers: "anthropic", "groq", "ollama"
 # For Anthropic: set ANTHROPIC_API_KEY environment variable
 # For Groq: set GROQ_API_KEY environment variable
+# For Ollama: run locally (http://127.0.0.1:11434/v1) or remote with OLLAMA_API_KEY
+# Example Ollama config:
+#   provider: "ollama"
+#   model: "llama3.2:latest"
+#   base_url: "http://127.0.0.1:11434/v1"
 brain:
-  provider: "groq"
-  model: "openai/gpt-oss-120b"
-  base_url: "https://api.groq.com"
+  provider: "ollama"
+  model: "gpt-oss:120b"
+  base_url: "https://ollama.com/v1"
   max_tokens: 1024
-  max_context_tokens: 6000
-  max_wait_seconds: 20.0
+  max_context_tokens: 8192
+  max_wait_seconds: 30.0
   tool_output_truncation_bytes: 4096
   history_turns: 4
   compact_tool_descriptions: true
@@ -32,6 +37,7 @@ apps:
   calculator: "calc.exe"
   chrome: "chrome.exe"
   edge: "msedge.exe"
+  browser: "chrome.exe"
   vscode: "code"
   code: "code"
   spotify: "spotify.exe"
@@ -39,6 +45,7 @@ apps:
   taskmgr: "taskmgr.exe"
   terminal: "wt.exe"
   cmd: "cmd.exe"
+  powershell: "powershell.exe"
 
 # Allowed shell commands with fixed executable and argument validation rules
 # Example 1: git status check
@@ -137,7 +144,7 @@ safety:
 
 # Iron Man Persona Configuration
 persona:
-  user_title: "Sir"
+  user_title: "Nithin Sir"
   name: "J.A.R.V.I.S."
 
 

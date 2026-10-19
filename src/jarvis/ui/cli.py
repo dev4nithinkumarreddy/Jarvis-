@@ -19,6 +19,7 @@ from rich.table import Table
 from jarvis.brain.anthropic_brain import AnthropicBrain
 from jarvis.brain.base import Brain
 from jarvis.brain.groq_brain import GroqBrain
+from jarvis.brain.ollama_brain import OllamaBrain
 from jarvis.core.channels import (
     CompositeInputChannel,
     CompositeOutputChannel,
@@ -50,7 +51,17 @@ from jarvis.ui.autostart import (
 )
 from jarvis.gui_control.screen import ScreenCapture
 
-console = Console()
+# Ensure Windows terminal standard streams encode UTF-8 cleanly
+if sys.platform == "win32":
+    try:
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+console = Console(legacy_windows=False)
 
 
 def create_orchestrator(
@@ -92,10 +103,26 @@ def create_orchestrator(
             except Exception as exc:
                 console.print(f"[bold red]Startup Check Failed:[/] {exc}", style="red")
                 sys.exit(1)
+        elif provider == "ollama":
+            base_url = getattr(config.brain, "base_url", "http://127.0.0.1:11434")
+            is_local = "127.0.0.1" in base_url or "localhost" in base_url
+            if not is_local and not os.environ.get("OLLAMA_API_KEY"):
+                console.print(
+                    "[bold yellow]Notice:[/] Remote Ollama endpoint configured without OLLAMA_API_KEY.\n"
+                    "If your remote Ollama endpoint requires authentication, set your key:\n"
+                    "  [cyan]$env:OLLAMA_API_KEY = 'your_key'[/cyan] (PowerShell)\n"
+                    "  [cyan]set OLLAMA_API_KEY=your_key[/cyan] (cmd)\n",
+                )
+            brain = OllamaBrain.from_config(config)
+            try:
+                brain.verify_model_exists()
+            except Exception as exc:
+                console.print(f"[bold red]Ollama Startup Check Failed:[/] {exc}", style="red")
+                sys.exit(1)
         else:
             console.print(
                 f"[bold red]Error:[/] Unsupported brain provider '{config.brain.provider}'. "
-                "Supported providers: 'anthropic', 'groq'.",
+                "Supported providers: 'anthropic', 'groq', 'ollama'.",
                 style="red",
             )
             sys.exit(1)
@@ -616,14 +643,41 @@ def run_command(args: argparse.Namespace) -> None:
 def brain_command(args: argparse.Namespace) -> None:
     """Handler for 'jarvis brain' command group."""
     if args.brain_action == "models":
+        provider = "groq"
+        base_url = None
         try:
             config = load_config(args.config)
-            base_url = config.brain.base_url if config and config.brain else "https://api.groq.com/openai/v1"
+            if config and config.brain:
+                provider = config.brain.provider.lower()
+                base_url = config.brain.base_url
         except Exception:
-            base_url = "https://api.groq.com/openai/v1"
+            pass
 
+        if provider == "ollama":
+            ollama_url = base_url or "http://127.0.0.1:11434/v1"
+            try:
+                models = OllamaBrain.list_available_models(base_url=ollama_url)
+            except Exception as exc:
+                console.print(f"[bold red]Error fetching Ollama models:[/] {exc}", style="red")
+                sys.exit(1)
+
+            table = Table(title=f"Available Ollama Models ({ollama_url})", show_header=True, header_style="bold cyan")
+            table.add_column("Model ID", style="bold green")
+            table.add_column("Provider", style="dim")
+            table.add_column("Tool Use Support", justify="center")
+            table.add_column("Vision Support", justify="center")
+
+            for m in models:
+                tool_use = "[green]Yes[/green]" if m.get("supports_tool_use") else "[red]No[/red]"
+                vision = "[green]Yes[/green]" if m.get("supports_vision") else "[dim]No[/dim]"
+                table.add_row(m["id"], str(m.get("owned_by", "ollama")), tool_use, vision)
+
+            console.print(table)
+            return
+
+        groq_url = base_url or "https://api.groq.com/openai/v1"
         try:
-            models = GroqBrain.list_available_models(base_url=base_url)
+            models = GroqBrain.list_available_models(base_url=groq_url)
         except ValueError as exc:
             console.print(f"[bold red]Error:[/] {exc}", style="red")
             sys.exit(1)
@@ -690,7 +744,7 @@ def widget_command(args: argparse.Namespace) -> None:
 
 def app_command(args: argparse.Namespace) -> None:
     """Launch J.A.R.V.I.S. as a 100% standalone native desktop application (no browser needed)."""
-    from jarvis.ui.native_app import JarvisNativeApp
+    from jarvis.ui.floating_dock import FloatingArcReactorWidget
     from jarvis.safety.killswitch import get_kill_switch
     from jarvis.voice.channel import generate_jarvis_greeting
 
@@ -705,12 +759,13 @@ def app_command(args: argparse.Namespace) -> None:
         dry_run=getattr(args, "dry_run", False),
     )
 
-    app = JarvisNativeApp(
+    app = FloatingArcReactorWidget(
         on_user_submit=lambda text: app.channel.say(orchestrator.run_turn(text)),
         on_screen_analyze=lambda: app.channel.say(orchestrator.run_turn("Jarvis, please analyze my current desktop screen.")),
         on_kill_switch=lambda: kill_switch.trigger(),
         user_title=user_title,
         model_name=getattr(config.brain, "model", "Groq LLaMA 3.3 70B"),
+        size=110,
     )
 
     # Register Global Summon Shortcut directly to native window
@@ -718,11 +773,12 @@ def app_command(args: argparse.Namespace) -> None:
     hotkey = UniversalGlobalHotkey(callback=app.summon, chord="ctrl+alt+j")
     hotkey.start()
 
-    # Spoken greeting
+    # Spoken greeting and initial display
     try:
         from jarvis.voice.tts import Pyttsx3TTS
         tts = Pyttsx3TTS()
         greeting = generate_jarvis_greeting(user_title)
+        app.post_response(greeting)
         threading.Thread(target=tts.speak, args=(greeting,), daemon=True).start()
     except Exception:
         pass

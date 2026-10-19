@@ -1078,8 +1078,78 @@ Address the user respectfully as '${userTitle}'. Speak with dry wit, calm techni
   }
 
   // -------------------------------------------------------------------------
-  // 12. Directive Input and Kill Switch Actions
+  // 12. Directive Input, Chips, Model Switcher, and Kill Switch Actions
   // -------------------------------------------------------------------------
+  // Quick Action Chips Event Delegation
+  const chipsBar = document.getElementById("hud-chips-bar");
+  if (chipsBar) {
+    chipsBar.addEventListener("click", (e) => {
+      const chip = e.target.closest(".hud-chip");
+      if (!chip) return;
+      if (chip.id === "hud-clear-chat-btn") {
+        if (transcriptContainer) {
+          transcriptContainer.innerHTML = `
+            <div class="chat-message system">
+              <span class="msg-author">STARK DEFENSE PROTOCOL</span>
+              <div class="msg-body">Transcript cleared. Neural telemetry online and operational, Nithin Sir.</div>
+            </div>`;
+        }
+        playBlipSound(1200);
+        return;
+      }
+
+      const directive = chip.getAttribute("data-directive");
+      if (!directive) return;
+
+      initAudio();
+      playActionSound();
+      appendChatMessage("user", directive);
+
+      if (activeMode === "local" && sendWSMessage({ type: "chat", text: directive })) {
+        return;
+      }
+      executeStandaloneTurn(directive);
+    });
+  }
+
+  // Model Switcher Dropdown
+  const modelChip = document.getElementById("hud-model-chip");
+  const modelMenu = document.getElementById("hud-model-menu");
+  const modelNameLabel = document.getElementById("hud-model-name");
+
+  if (modelChip && modelMenu) {
+    modelChip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      modelMenu.classList.toggle("hidden");
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!modelMenu.contains(e.target) && e.target !== modelChip) {
+        modelMenu.classList.add("hidden");
+      }
+    });
+
+    modelMenu.addEventListener("click", (e) => {
+      const item = e.target.closest(".dropdown-item");
+      if (!item) return;
+
+      const newModel = item.getAttribute("data-model");
+      if (!newModel) return;
+
+      modelMenu.querySelectorAll(".dropdown-item").forEach((el) => el.classList.remove("active"));
+      item.classList.add("active");
+
+      if (modelNameLabel) {
+        const shortName = newModel.split("/").pop().split(":")[0].toUpperCase();
+        modelNameLabel.textContent = shortName;
+      }
+      modelMenu.classList.add("hidden");
+      localStorage.setItem("jarvis_groq_model", newModel);
+      playActionSound();
+      appendChatMessage("system", `Neural Core Recalibrated: Active model set to ${newModel}, Nithin Sir.`);
+    });
+  }
+
   if (screenVisionBtn) {
     screenVisionBtn.addEventListener("click", () => {
       initAudio();
@@ -1131,6 +1201,16 @@ Address the user respectfully as '${userTitle}'. Speak with dry wit, calm techni
       }
     });
   }
+
+  // Global Keyboard Shortcuts
+  document.addEventListener("keydown", (e) => {
+    // Escape halts active speech
+    if (e.key === "Escape") {
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      isSpeakingAudio = false;
+      updateState("idle");
+    }
+  });
 
   // -------------------------------------------------------------------------
   // 13. Initialization

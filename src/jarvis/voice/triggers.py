@@ -73,20 +73,95 @@ class VoiceTrigger(ABC):
 
 
 def play_ptt_tone(tone_type: str = "start") -> None:
-    """Play a short, non-blocking procedural chime for voice interaction feedback."""
+    """Play a short, non-blocking procedural chime for voice interaction feedback.
+
+    Cinematic Stark Acoustic Profiles:
+        - "start": Dual ascending repulsor chirp (880 Hz -> 1320 Hz)
+        - "stop": Dual descending confirmation chirp (1100 Hz -> 660 Hz)
+        - "cancel" or "silence": Dual low deactivation tone (600 Hz -> 440 Hz)
+        - "summon": Triple ascending Stark boot chord (784 Hz -> 988 Hz -> 1318 Hz)
+    """
     def _beep() -> None:
         try:
             import platform
             if platform.system() == "Windows":
                 import winsound
-                if tone_type == "start":
-                    winsound.Beep(1200, 60)
-                else:
-                    winsound.Beep(800, 50)
+                t = tone_type.lower()
+                if t == "start":
+                    winsound.Beep(880, 45)
+                    winsound.Beep(1320, 60)
+                elif t in ("cancel", "silence", "stop_speech"):
+                    winsound.Beep(600, 50)
+                    winsound.Beep(440, 60)
+                elif t == "summon":
+                    winsound.Beep(784, 40)
+                    winsound.Beep(988, 40)
+                    winsound.Beep(1318, 70)
+                else:  # "stop" / finish
+                    winsound.Beep(1100, 40)
+                    winsound.Beep(660, 55)
         except Exception:
             pass
 
     threading.Thread(target=_beep, daemon=True).start()
+
+
+
+def record_speech_with_vad(
+    capture: AudioCapture,
+    max_seconds: float = 12.0,
+    silence_seconds: float = 1.2,
+    energy_threshold: float = 0.012,
+    enable_chimes: bool = True,
+) -> np.ndarray:
+    """Record microphone audio until the user finishes speaking (silence detected)."""
+    if enable_chimes:
+        play_ptt_tone("start")
+
+    frame_queue: queue.Queue[np.ndarray] = queue.Queue()
+
+    def _cb(chunk: np.ndarray) -> None:
+        frame_queue.put(chunk)
+
+    capture.start_stream(_cb, blocksize=1280)
+    utterance_chunks: list[np.ndarray] = []
+    silence_time = 0.0
+    had_voice = False
+    start_time = time.time()
+    chunk_dur = 1280 / capture.sample_rate
+
+    try:
+        while True:
+            if (time.time() - start_time) >= max_seconds:
+                break
+            try:
+                chunk = frame_queue.get(timeout=0.2)
+            except queue.Empty:
+                silence_time += 0.2
+                if had_voice and silence_time >= silence_seconds:
+                    break
+                continue
+
+            utterance_chunks.append(chunk)
+            rms = float(np.sqrt(np.mean(chunk ** 2))) if len(chunk) > 0 else 0.0
+            if rms >= energy_threshold:
+                had_voice = True
+                silence_time = 0.0
+            else:
+                silence_time += chunk_dur
+
+            if had_voice and silence_time >= silence_seconds:
+                break
+            if not had_voice and (time.time() - start_time) >= 3.5:
+                break
+    finally:
+        capture.stop_stream()
+        if enable_chimes and had_voice:
+            play_ptt_tone("stop")
+
+    if not utterance_chunks or not had_voice:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(utterance_chunks)
 
 
 class PushToTalkTrigger(VoiceTrigger):

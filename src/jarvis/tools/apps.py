@@ -19,11 +19,34 @@ def create_open_app_tool(
     adapter = os_adapter if os_adapter is not None else get_os_adapter()
     apps_map = MappingProxyType(dict(allowed_apps))
 
-    def open_app(name: str) -> str:
+    # Built-in common user alias normalizations
+    aliases = {
+        "browser": "chrome",
+        "web browser": "chrome",
+        "google chrome": "chrome",
+        "google": "chrome",
+        "microsoft edge": "edge",
+        "msedge": "edge",
+        "visual studio code": "vscode",
+        "vs code": "vscode",
+        "files": "explorer",
+        "file explorer": "explorer",
+        "windows explorer": "explorer",
+        "powershell": "terminal",
+        "windows terminal": "terminal",
+        "command prompt": "cmd",
+        "prompt": "cmd",
+        "music": "spotify",
+    }
+
+    def open_app(name: str, argument: str = "") -> str:
         clean_name = name.strip().lower()
+        # Check alias table first
+        normalized = aliases.get(clean_name, clean_name)
+
         matched_cmd = None
         for app_name, cmd in apps_map.items():
-            if app_name.strip().lower() == clean_name:
+            if app_name.strip().lower() in (clean_name, normalized):
                 matched_cmd = cmd
                 break
 
@@ -35,18 +58,24 @@ def create_open_app_tool(
                 f"Allowed applications from config: [{available_desc}]."
             )
 
-        adapter.open_app(matched_cmd)
-        return f"Successfully initiated launch for application '{name}'."
+        full_cmd = f"{matched_cmd} {argument.strip()}".strip() if argument.strip() else matched_cmd
+        adapter.open_app(full_cmd)
+        target_info = f" with '{argument.strip()}'" if argument.strip() else ""
+        return f"Successfully initiated launch for application '{name}'{target_info}."
 
     return ToolSpec(
         name="open_app",
-        description="Launch an allowed desktop application by name.",
+        description="Launch an allowed desktop application by name (e.g. 'chrome', 'edge', 'browser', 'notepad', 'calc', 'vscode', 'explorer', 'spotify') with optional argument or URL.",
         input_schema={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Configured application name to launch.",
+                    "description": "Configured application name or alias to launch (e.g. 'chrome', 'browser', 'notepad', 'calc', 'vscode').",
+                },
+                "argument": {
+                    "type": "string",
+                    "description": "Optional argument, file path, or URL to open with the application.",
                 },
             },
             "required": ["name"],

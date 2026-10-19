@@ -8,7 +8,7 @@ import logging
 import platform
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -34,60 +34,69 @@ class UniversalGlobalHotkey:
         self.callback = callback
         self.chord = chord.lower()
         self._listener = None
+        self._poller_thread = None
+        self._stop_event = threading.Event()
         self._ctrl_down = False
         self._alt_down = False
         self._lock = threading.Lock()
         self._last_trigger_time = 0.0
 
+    def _trigger(self) -> None:
+        """Debounced execution of hotkey callback."""
+        now = time.time()
+        with self._lock:
+            if now - self._last_trigger_time > 0.4:
+                self._last_trigger_time = now
+                logger.info("Universal Hotkey (Ctrl+Alt+J) detected! Executing callback...")
+                try:
+                    threading.Thread(target=self.callback, daemon=True).start()
+                except Exception as err:
+                    logger.error("Callback execution error: %s", err)
+
+    def _poll_keys(self) -> None:
+        """Low-level Win32 hardware key poller thread."""
+        u32 = ctypes.windll.user32
+        while not self._stop_event.is_set():
+            try:
+                # 0x11 = VK_CONTROL, 0xA2 = VK_LCONTROL, 0xA3 = VK_RCONTROL
+                ctrl = bool((u32.GetAsyncKeyState(0x11) | u32.GetAsyncKeyState(0xA2) | u32.GetAsyncKeyState(0xA3)) & 0x8000)
+                # 0x12 = VK_MENU (Alt), 0xA4 = VK_LMENU, 0xA5 = VK_RMENU
+                alt = bool((u32.GetAsyncKeyState(0x12) | u32.GetAsyncKeyState(0xA4) | u32.GetAsyncKeyState(0xA5)) & 0x8000)
+                # 0x4A = 'J'
+                j = bool(u32.GetAsyncKeyState(0x4A) & 0x8000)
+                if ctrl and alt and j:
+                    self._trigger()
+                    time.sleep(0.35)
+            except Exception:
+                pass
+            time.sleep(0.04)
+
     def start(self) -> None:
         """Start global hotkey detection."""
+        self._stop_event.clear()
+
+        # 1. Start Win32 hardware poller thread
+        self._poller_thread = threading.Thread(target=self._poll_keys, daemon=True)
+        self._poller_thread.start()
+
+        # 2. Start pynput keyboard hook as secondary listener
         try:
             from pynput import keyboard
 
             def on_press(key: Any) -> None:
-                # 1. Track Control state
                 if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
                     self._ctrl_down = True
                     return
-
-                # 2. Track Alt / AltGr state (Windows AltGr physically combines Alt + Ctrl)
-                if key in (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r):
+                if key in (keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r, keyboard.Key.alt_gr):
                     self._alt_down = True
                     return
-                if key == keyboard.Key.alt_gr:
-                    self._alt_down = True
-                    self._ctrl_down = True
-                    return
 
-                # 3. Check target key (e.g. 'J' or VK 74)
                 vk = getattr(key, "vk", None)
                 char = getattr(key, "char", None)
-
-                # Match 'j' by virtual keycode (0x4A / 74) or character representation
                 is_j = (vk == 74) or (char in ("j", "J", "\n", "\x0a"))
 
-                # Also verify via Win32 GetAsyncKeyState as second source of truth
-                is_ctrl = self._ctrl_down
-                is_alt = self._alt_down
-                if not (is_ctrl and is_alt):
-                    try:
-                        u32 = ctypes.windll.user32
-                        is_ctrl = bool((u32.GetAsyncKeyState(0x11) & 0x8000))
-                        is_alt = bool((u32.GetAsyncKeyState(0x12) & 0x8000))
-                    except Exception:
-                        pass
-
-                if is_j and is_ctrl and is_alt:
-                    now = time.time()
-                    with self._lock:
-                        # Debounce 0.5s to prevent multiple triggers from key repeat
-                        if now - self._last_trigger_time > 0.5:
-                            self._last_trigger_time = now
-                            logger.info("Universal Hotkey (Ctrl+Alt+J) detected! Executing callback...")
-                            try:
-                                threading.Thread(target=self.callback, daemon=True).start()
-                            except Exception as err:
-                                logger.error("Callback execution error: %s", err)
+                if is_j and self._ctrl_down and self._alt_down:
+                    self._trigger()
 
             def on_release(key: Any) -> None:
                 if key in (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
@@ -104,10 +113,11 @@ class UniversalGlobalHotkey:
 
     def stop(self) -> None:
         """Stop keyboard listener."""
+        self._stop_event.set()
         if self._listener is not None:
             try:
                 self._listener.stop()
             except Exception:
                 pass
             self._listener = None
-            logger.info("Universal Global Hotkey listener stopped cleanly.")
+        logger.info("Universal Global Hotkey listener stopped cleanly.")

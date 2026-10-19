@@ -3,32 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JARVIS HUD // STARK INDUSTRIES MARK VII</title>
+  <title>J.A.R.V.I.S. HUD // STARK INDUSTRIES MARK VII</title>
   <link rel="stylesheet" href="./style.css">
 </head>
 <body class="dark-theme stark-hud">
   <div class="hud-container">
-    <!-- Top Holographic Header -->
+    <!-- Top Holographic Stark Header -->
     <header class="hud-header">
       <div class="hud-brand">
         <div class="hud-reactor-mini-icon">
-          <div class="mini-core"></div>
+          <div class="mini-core animate-pulse"></div>
         </div>
         <div class="hud-brand-text">
-          <h1 class="hud-title">JARVIS HUD</h1>
+          <h1 class="hud-title tracking-wider">J.A.R.V.I.S. HUD</h1>
           <span class="hud-subtitle">MARK VII // STARK DEFENSE SYSTEMS</span>
         </div>
       </div>
 
       <div class="hud-header-center">
-        <canvas id="ambient-canvas" width="200" height="36" aria-label="Ambient Visualizer"></canvas>
-        <div class="hud-telemetry-tag" id="hud-user-tag">ATTENDING: <span id="hud-user-title">SIR</span></div>
+        <canvas id="ambient-canvas" width="220" height="34" aria-label="Ambient Visualizer"></canvas>
+        <div class="hud-telemetry-tag" id="hud-user-tag">ATTENDING: <span id="hud-user-title">NITHIN SIR</span></div>
       </div>
 
       <div class="hud-status-bar">
+        <!-- Interactive Model Switcher Chip -->
+        <div class="hud-model-chip-wrap" title="Click to Switch Neural Brain Model">
+          <button type="button" id="hud-model-chip" class="hud-model-chip" aria-haspopup="true">
+            <span class="model-icon">🧠</span>
+            <span id="hud-model-name" class="model-label">GPT-OSS 120B</span>
+            <span class="model-caret">▾</span>
+          </button>
+          <div id="hud-model-menu" class="hud-dropdown-menu hidden" role="menu">
+            <div class="dropdown-header">NEURAL MODEL ARCHITECTURE</div>
+            <button type="button" class="dropdown-item active" data-model="gpt-oss:120b">🧠 GPT-OSS 120B (Flagship)</button>
+            <button type="button" class="dropdown-item" data-model="deepseek-v4.1-flash">⚡ DeepSeek V4.1 Flash (Turbo)</button>
+            <button type="button" class="dropdown-item" data-model="glm-5.3-flash">🚀 GLM 5.3 Flash (High-Speed)</button>
+            <button type="button" class="dropdown-item" data-model="kimi-k2.7-code">💻 Kimi K2.7 Code (Developer)</button>
+            <button type="button" class="dropdown-item" data-model="mistral-large-4">🛡️ Mistral Large 4 (Reasoning)</button>
+            <button type="button" class="dropdown-item" data-model="nemotron-3-super">🔬 Nemotron-3 Super (NVIDIA)</button>
+            <button type="button" class="dropdown-item" data-model="llama3.2:latest">🏠 Local Daemon (Offline)</button>
+          </div>
+        </div>
+
         <div class="status-pill mode" id="hud-mode-pill" title="Current Connection Protocol">
           <span class="status-indicator-dot" id="hud-mode-dot"></span>
-          <span class="status-label" id="hud-mode-text">SEARCHING...</span>
+          <span class="status-label" id="hud-mode-text">ONLINE</span>
         </div>
 
         <button id="sfx-toggle-btn" class="hud-sfx-button" title="Toggle Procedural Audio Effects" type="button">
@@ -69,10 +88,23 @@
         <div class="transcript-scroll" id="transcript-container">
           <div class="chat-message system">
             <span class="msg-author">STARK DEFENSE PROTOCOL</span>
-            <div class="msg-body">J.A.R.V.I.S. Mark VII neural core initialized. Defense perimeter active. Awaiting your directive, Sir.</div>
+            <div class="msg-body">J.A.R.V.I.S. Mark VII neural core initialized. Defense perimeter active. Awaiting your directive, Nithin Sir.</div>
           </div>
         </div>
 
+        <!-- High-Tech Quick Action Chips Row -->
+        <div class="hud-chips-bar" id="hud-chips-bar">
+          <span class="chips-title">QUICK PROTOCOLS:</span>
+          <button type="button" class="hud-chip" data-directive="Run a comprehensive system diagnostic status report on CPU, memory, storage, and battery.">⚡ STATUS</button>
+          <button type="button" class="hud-chip" data-directive="What is the current weather conditions and temperature outside?">🌦️ WEATHER</button>
+          <button type="button" class="hud-chip" data-directive="Check recent tech headlines and summarize top stories.">📰 NEWS</button>
+          <button type="button" class="hud-chip" data-directive="Toggle media play/pause on desktop.">⏯️ MEDIA</button>
+          <button type="button" class="hud-chip" data-directive="Show clean Windows desktop.">🖥️ DESKTOP</button>
+          <button type="button" class="hud-chip" data-directive="Set a timer for 5 minutes.">⏱️ 5M TIMER</button>
+          <button type="button" class="hud-chip chip-clear" id="hud-clear-chat-btn">🧹 CLEAR</button>
+        </div>
+
+        <!-- Input Bar with Voice & Screen Vision -->
         <form id="chat-form" class="hud-input-bar">
           <div class="input-corner-decor"></div>
           <button type="button" id="voice-input-btn" class="hud-mic-btn" title="Speak to J.A.R.V.I.S. (Web Speech API / Push-To-Talk)">
@@ -83,7 +115,7 @@
             <span class="vision-icon">&#128065;</span>
             <span class="vision-text">SCREEN</span>
           </button>
-          <input type="text" id="chat-input" placeholder="Enter directive for J.A.R.V.I.S...." autocomplete="off">
+          <input type="text" id="chat-input" placeholder="Enter directive for J.A.R.V.I.S. (or hold Space to speak)..." autocomplete="off">
           <button type="submit" id="send-btn" class="hud-send-btn">
             <span class="btn-text">TRANSMIT</span>
             <span class="btn-glow"></span>
@@ -101,12 +133,12 @@
           </div>
           <div class="reactor-canvas-wrapper">
             <canvas id="arc-reactor-canvas" width="220" height="220" aria-label="Arc Reactor Visualizer"></canvas>
-            <canvas id="soundwave-canvas" width="220" height="32" aria-label="Acoustic Waveform"></canvas>
-            <div class="reactor-ring-label">MARK VII REPULSOR COIL</div>
+            <canvas id="soundwave-canvas" width="220" height="34" aria-label="Acoustic Waveform"></canvas>
+            <div class="reactor-ring-label">MARK VII REPULSOR COIL // STARK IND.</div>
           </div>
         </div>
 
-        <!-- Live System Telemetry Card with Circular Gauges -->
+        <!-- Live System Telemetry Card with Circular SVG Gauges -->
         <div class="hud-card stats-card">
           <div class="card-header">
             <h3>TELEMETRY GAUGES</h3>
@@ -226,7 +258,7 @@
               </label>
               <label class="radio-label">
                 <input type="radio" name="conn-mode" value="standalone" id="mode-standalone">
-                <span>STANDALONE CLOUD (DIRECT GROQ IN-BROWSER)</span>
+                <span>STANDALONE CLOUD (DIRECT OLLAMA / GROQ IN-BROWSER)</span>
               </label>
               <label class="radio-label">
                 <input type="radio" name="conn-mode" value="bridge" id="mode-bridge">
@@ -236,23 +268,25 @@
           </div>
 
           <div class="config-group" id="groq-key-group">
-            <label class="config-label" for="cfg-groq-key">GROQ API KEY (FOR IN-BROWSER / GITHUB PAGES MODE)</label>
-            <input type="password" id="cfg-groq-key" class="config-input" placeholder="gsk_..." autocomplete="off">
-            <span class="config-hint">Stored strictly in browser localStorage. Never transmitted to any third-party server.</span>
+            <label class="config-label" for="cfg-groq-key">API KEY (OLLAMA / GROQ CLOUD)</label>
+            <input type="password" id="cfg-groq-key" class="config-input" placeholder="Bearer key or token..." autocomplete="off">
+            <span class="config-hint">Stored securely in browser localStorage. Never transmitted to third parties.</span>
           </div>
 
           <div class="config-group">
-            <label class="config-label" for="cfg-groq-model">NEURAL MODEL</label>
+            <label class="config-label" for="cfg-groq-model">DEFAULT NEURAL MODEL</label>
             <select id="cfg-groq-model" class="config-select">
-              <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (High Reasoning)</option>
-              <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (Meta Llama 3.3)</option>
-              <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (Fastest Latency)</option>
+              <option value="gpt-oss:120b">gpt-oss:120b (Ollama Cloud Flagship)</option>
+              <option value="deepseek-v4.1-flash">deepseek-v4.1-flash (Ultra-Fast Turbo)</option>
+              <option value="kimi-k2.7-code">kimi-k2.7-code (Developer Specialist)</option>
+              <option value="mistral-large-4">mistral-large-4 (Reasoning)</option>
+              <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (Groq)</option>
             </select>
           </div>
 
           <div class="config-group">
             <label class="config-label" for="cfg-user-title">USER HONORIFIC</label>
-            <input type="text" id="cfg-user-title" class="config-input" value="Sir" placeholder="Sir / Mr. Stark">
+            <input type="text" id="cfg-user-title" class="config-input" value="Nithin Sir" placeholder="Nithin Sir">
           </div>
         </div>
 

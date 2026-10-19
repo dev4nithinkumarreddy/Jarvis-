@@ -13,11 +13,11 @@ class BrainConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: str = Field(..., min_length=1, description="LLM provider name (e.g. anthropic, groq)")
+    provider: str = Field(..., min_length=1, description="LLM provider name (e.g. anthropic, groq, ollama)")
     model: str = Field(..., min_length=1, description="LLM model name. No default hardcoded in code.")
     base_url: str = Field(
         default="https://api.groq.com",
-        description="API base URL for Groq or OpenAI-compatible chat-completions endpoint",
+        description="API base URL for Groq, Ollama, or OpenAI-compatible chat-completions endpoint",
     )
     max_tokens: int = Field(
         default=1024,

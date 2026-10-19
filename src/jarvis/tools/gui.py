@@ -62,35 +62,82 @@ def create_gui_tools(
             monitor_idx = int(monitor.arguments.get("monitor", 1))
         else:
             monitor_idx = int(monitor)
-
         if not supports_images:
             return ToolResult(
                 call_id=call_id,
                 ok=False,
-                error=(
-                    "Screenshot tool is disabled: the active brain model does not support vision/image inputs. "
-                    "Please configure a vision-capable model to enable screen capture."
-                ),
+                error="Screenshot tool is disabled because the active brain does not support vision/image inputs.",
             )
+
 
         try:
             res = screen.capture_screen(monitor_index=monitor_idx, max_width=max_screen_width)
+
             thumb_path = save_thumbnail(res.image_bytes, output_dir=thumbnail_dir, prefix="thumb_screen")
             summary = (
                 f"Screenshot captured: monitor={monitor_idx}, "
                 f"original_size=({res.original_width}x{res.original_height}), "
                 f"scaled_size=({res.scaled_width}x{res.scaled_height}), "
                 f"scale_factor={res.scale_factor:.4f}. "
-                f"Thumbnail: {thumb_path}"
+                f"Thumbnail saved to: {thumb_path}."
             )
+            window_info = ""
+            try:
+                import win32gui
+                fg = win32gui.GetForegroundWindow()
+                if fg:
+                    title = win32gui.GetWindowText(fg).strip()
+                    if title:
+                        window_info = f" Active window in focus: '{title}'."
+                try:
+                    import pygetwindow as gw
+                    titles = [
+                        t.strip()
+                        for t in gw.getAllTitles()
+                        if t.strip() and t.strip() != title and t.strip() not in ("Program Manager", "Settings", "")
+                    ]
+                    if titles:
+                        window_info += f" Other open applications: {', '.join(titles[:4])}."
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            # High-Tech OCR Extraction (Reads active window text, error dialogs, terminals)
+            ocr_text = ""
+            try:
+                import io
+                import asyncio
+                import winocr
+                from PIL import Image
+                pil_img = Image.open(io.BytesIO(res.image_bytes))
+                ocr_res = asyncio.run(winocr.recognize_pil(pil_img, "en"))
+                extracted = ocr_res.text.strip() if hasattr(ocr_res, "text") else ""
+                if extracted:
+                    # Keep salient text (truncate if excessively long)
+                    if len(extracted) > 1500:
+                        extracted = extracted[:1500] + " ...[truncated]"
+                    ocr_text = f"\n[OCR Text Visible on Screen]:\n{extracted}"
+            except Exception as ocr_err:
+                logger.debug("Screen OCR extraction skipped: %s", ocr_err)
+
+            if not supports_images:
+                return ToolResult(
+                    call_id=call_id,
+                    ok=True,
+                    content=summary + window_info + ocr_text + " Note: Full image bytes omitted as active brain is text-oriented.",
+                    thumbnail_path=str(thumb_path),
+                )
+
             return ToolResult(
                 call_id=call_id,
                 ok=True,
-                content=summary,
+                content=summary + window_info + ocr_text,
                 image_bytes=res.image_bytes,
                 image_media_type="image/png",
                 thumbnail_path=str(thumb_path),
             )
+
         except ScreenCaptureError as exc:
             return ToolResult(
                 call_id=call_id,

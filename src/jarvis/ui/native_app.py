@@ -27,6 +27,9 @@ if tcl_dir.exists():
 
 import customtkinter as ctk
 
+import math
+import tkinter as tk
+
 from jarvis.core.channels import Confirmer, OutputChannel
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,102 @@ BORDER_SUBTLE = "#14314A"
 BORDER_GOLD = "#4D3800"
 TEXT_MAIN = "#DDF7FF"
 TEXT_MUTED = "#5A738E"
+
+
+class ArcReactorCanvas(tk.Canvas):
+    """Animated Stark Arc Reactor Canvas Widget with pulsing glow and state response."""
+
+    def __init__(self, master: Any, size: int = 54, bg: str = BG_CARD, **kwargs: Any) -> None:
+        super().__init__(master, width=size, height=size, bg=bg, highlightthickness=0, **kwargs)
+        self.size = size
+        self.angle_offset = 0.0
+        self.pulse_phase = 0.0
+        self.color_core = "#FFFFFF"
+        self.color_ring = ACCENT_CYAN
+        self.color_coils = ACCENT_GOLD
+        self._animating = True
+        self._state = "ONLINE"
+        self._draw_reactor()
+        self._animate()
+
+    def set_state(self, state: str) -> None:
+        self._state = state.upper()
+        if self._state == "THINKING":
+            self.color_ring = ACCENT_GOLD
+            self.color_coils = "#FFAA00"
+            self.color_core = "#FFE885"
+        elif self._state == "LISTENING":
+            self.color_ring = "#00FFFF"
+            self.color_coils = "#00E5FF"
+            self.color_core = "#FFFFFF"
+        else:
+            self.color_ring = ACCENT_CYAN
+            self.color_coils = ACCENT_GOLD
+            self.color_core = "#FFFFFF"
+
+    def _draw_reactor(self) -> None:
+        try:
+            self.delete("all")
+            cx, cy = self.size / 2.0, self.size / 2.0
+            r_outer = (self.size / 2.0) * 0.90
+            r_inner = r_outer * 0.65
+            r_core = r_outer * 0.35
+
+            # 1. Dark outer ring background
+            self.create_oval(
+                cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer,
+                fill="#030814", outline=self.color_ring, width=2,
+            )
+
+            # 2. 10 Electromagnetic repulsor coils
+            coil_r = (r_outer + r_inner) / 2.0
+            for i in range(10):
+                a = self.angle_offset + i * (2.0 * math.pi / 10.0)
+                bx = cx + math.cos(a) * coil_r
+                by = cy + math.sin(a) * coil_r
+                cr = max(2.0, self.size * 0.045)
+                self.create_oval(
+                    bx - cr, by - cr, bx + cr, by + cr,
+                    fill=self.color_coils, outline=self.color_ring, width=1,
+                )
+
+            # 3. Inner gyro ring
+            self.create_oval(
+                cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner,
+                outline=self.color_ring, width=1.5,
+            )
+
+            # 4. Glowing center core with rhythmic pulse
+            pulse = 1.0 + 0.15 * math.sin(self.pulse_phase)
+            c_r = r_core * pulse
+            self.create_oval(
+                cx - c_r, cy - c_r, cx + c_r, cy + c_r,
+                fill=self.color_core, outline=self.color_ring, width=2,
+            )
+        except Exception:
+            pass
+
+    def _animate(self) -> None:
+        if not self._animating:
+            return
+        try:
+            if self._state == "THINKING":
+                self.angle_offset += 0.08
+                self.pulse_phase += 0.20
+            elif self._state == "LISTENING":
+                self.pulse_phase += 0.25
+            else:
+                self.angle_offset += 0.015
+                self.pulse_phase += 0.08
+
+            self._draw_reactor()
+            self.after(50, self._animate)
+        except Exception:
+            pass
+
+    def destroy(self) -> None:
+        self._animating = False
+        super().destroy()
 
 
 class NativeAppChannel(OutputChannel, Confirmer):
@@ -126,9 +225,13 @@ class JarvisNativeApp(ctk.CTk):
         header_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER_CYAN)
         header_frame.pack(fill="x", padx=14, pady=(14, 8))
 
+        # Animated Glowing Arc Reactor Canvas Widget
+        self.arc_reactor = ArcReactorCanvas(header_frame, size=52, bg=BG_CARD)
+        self.arc_reactor.pack(side="left", padx=(14, 2), pady=10)
+
         # Title & Subtitle
         title_box = ctk.CTkFrame(header_frame, fg_color="transparent")
-        title_box.pack(side="left", padx=16, pady=12)
+        title_box.pack(side="left", padx=(6, 16), pady=12)
 
         title_lbl = ctk.CTkLabel(
             title_box,
@@ -283,9 +386,11 @@ class JarvisNativeApp(ctk.CTk):
             threading.Thread(target=self.on_user_submit, args=(text,), daemon=True).start()
 
     def set_state(self, state: str) -> None:
-        """Update the status pill text and color."""
+        """Update the status pill text, color, and Arc Reactor animation state."""
         def _update():
             s = state.upper()
+            if hasattr(self, "arc_reactor"):
+                self.arc_reactor.set_state(s)
             if s == "THINKING":
                 self.state_pill.configure(text="● THINKING", text_color=ACCENT_GOLD, fg_color="#332800")
             elif s == "LISTENING":
@@ -383,10 +488,20 @@ class JarvisNativeApp(ctk.CTk):
                 pass
 
             self.deiconify()
+            try:
+                import ctypes
+                hwnd = self.winfo_id()
+                u32 = ctypes.windll.user32
+                # SW_RESTORE = 9
+                u32.ShowWindow(hwnd, 9)
+                u32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
             self.lift()
             self.focus_force()
             self.attributes("-topmost", True)
-            self.after(200, lambda: self.attributes("-topmost", False))
+            self.after(250, lambda: self.attributes("-topmost", False))
             self.entry.focus_set()
 
         self.after(0, _bring_to_front)

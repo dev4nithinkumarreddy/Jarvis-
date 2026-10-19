@@ -26,8 +26,24 @@ from jarvis.tools.memory import create_memory_tools
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.shell import create_run_command_tool
 from jarvis.tools.system_tools import (
+    create_battery_status_tool,
     create_current_time_tool,
+    create_lock_workstation_tool,
+    create_media_control_tool,
+    create_mute_volume_tool,
+    create_set_volume_tool,
     create_system_info_tool,
+    create_toggle_show_desktop_tool,
+    create_weather_tool,
+)
+from jarvis.tools.timer import (
+    create_cancel_timer_tool,
+    create_list_timers_tool,
+    create_timer_tool,
+)
+from jarvis.tools.web_search import (
+    create_latest_news_tool,
+    create_web_search_tool,
 )
 
 
@@ -36,7 +52,7 @@ def create_read_only_tools(
     protected_paths: Sequence[Path | str] | None = None,
     read_safe_files: Sequence[Path | str] | None = None,
 ) -> list[ToolSpec]:
-    """Factory creating all 5 read-only tools (AUTO tier)."""
+    """Factory creating read-only tools (AUTO tier)."""
     return [
         create_list_directory_tool(allowed_roots),
         create_read_text_file_tool(
@@ -47,7 +63,15 @@ def create_read_only_tools(
         create_search_files_tool(allowed_roots),
         create_system_info_tool(),
         create_current_time_tool(),
+        create_battery_status_tool(),
+        create_weather_tool(),
+        create_web_search_tool(),
+        create_latest_news_tool(),
+        create_timer_tool(),
+        create_cancel_timer_tool(),
+        create_list_timers_tool(),
     ]
+
 
 
 def create_state_altering_tools(
@@ -89,6 +113,11 @@ def create_state_altering_tools(
             read_safe_files=read_safe_files,
         ),
         create_run_command_tool(allowed_commands, allowed_roots),
+        create_set_volume_tool(),
+        create_mute_volume_tool(),
+        create_lock_workstation_tool(),
+        create_media_control_tool(),
+        create_toggle_show_desktop_tool(),
     ]
 
 
@@ -137,21 +166,34 @@ __all__ = [
     "BrowserSession",
     "ToolRegistry",
     "create_all_tools",
+    "create_battery_status_tool",
     "create_browser_tools",
+    "create_cancel_timer_tool",
     "create_copy_path_tool",
     "create_create_text_file_tool",
     "create_current_time_tool",
     "create_gui_tools",
+    "create_latest_news_tool",
     "create_list_directory_tool",
+    "create_list_timers_tool",
+    "create_lock_workstation_tool",
+    "create_media_control_tool",
     "create_memory_tools",
     "create_move_path_tool",
     "create_move_to_trash_tool",
+    "create_mute_volume_tool",
     "create_open_app_tool",
     "create_open_path_tool",
     "create_read_only_tools",
     "create_read_text_file_tool",
     "create_run_command_tool",
     "create_search_files_tool",
+    "create_set_volume_tool",
     "create_state_altering_tools",
     "create_system_info_tool",
+    "create_timer_tool",
+    "create_toggle_show_desktop_tool",
+    "create_weather_tool",
+    "create_web_search_tool",
 ]
+
